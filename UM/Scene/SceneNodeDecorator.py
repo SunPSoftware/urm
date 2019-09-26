@@ -1,10 +1,5 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
-
-from typing import Dict, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from UM.Scene.SceneNode import SceneNode
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 
 ##      The point of a SceneNodeDecorator is that it can be added to a SceneNode, where it then provides decorations
@@ -12,19 +7,19 @@ if TYPE_CHECKING:
 #       in SceneNodeDecorator).
 #       \sa SceneNode
 class SceneNodeDecorator:
-    def __init__(self, node: Optional["SceneNode"] = None) -> None:
+    def __init__(self, node = None):
         super().__init__()
-        self._node = node  # type: Optional["SceneNode"]
+        self._node = node
         
-    def setNode(self, node: "SceneNode") -> None:
+    def setNode(self, node):
         self._node = node
 
-    def getNode(self) -> Optional["SceneNode"]:
+    def getNode(self):
         return self._node
 
     ##  Clear all data associated with this decorator. This will be called before the decorator is removed
-    def clear(self) -> None:
+    def clear(self):
         pass
 
-    def __deepcopy__(self, memo: Dict[int, object]) -> "SceneNodeDecorator":
+    def __deepcopy__(self, memo):
         raise NotImplementedError("Subclass {0} of SceneNodeDecorator should implement their own __deepcopy__() method.".format(str(self)))

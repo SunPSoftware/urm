@@ -1,63 +1,55 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
-from UM.Scene.Iterator.DepthFirstIterator import DepthFirstIterator
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
+
 from UM.Scene.Scene import Scene
-from UM.Event import Event, KeyEvent, MouseEvent, ToolEvent, ViewEvent
-from UM.Scene.SceneNode import SceneNode
+from UM.Event import Event, MouseEvent, ToolEvent, ViewEvent
 from UM.Signal import Signal, signalemitter
 from UM.Logger import Logger
 from UM.PluginRegistry import PluginRegistry
 
 # Type hinting imports
 from UM.View.View import View
-from UM.Stage import Stage
 from UM.InputDevice import InputDevice
-from typing import cast, Optional, Dict, Union
-from UM.Math.Vector import Vector
-MYPY = False
-if MYPY:
-    from UM.Application import Application
-    from UM.Tool import Tool
+from typing import Optional, Dict
 
-
-##  Glue class that holds the scene, (active) view(s), (active) tool(s) and possible user inputs.
+##      Glue class that holds the scene, (active) view(s), (active) tool(s) and possible user inputs.
 #
-#   The different types of views / tools / inputs are defined by plugins.
-#   \sa View
-#   \sa Tool
-#   \sa Scene
+#       The different types of views / tools / inputs are defined by plugins.
+#       \sa View
+#       \sa Tool
+#       \sa Scene
 @signalemitter
 class Controller:
-    def __init__(self, application: "Application") -> None:
+    def __init__(self, application):
         super().__init__()  # Call super to make multiple inheritance work.
+        self._active_tool = None
+        self._tool_operation_active = False
+        self._tools = {}
 
+        self._input_devices = {}
+
+        self._active_view = None
+        self._views = {}
         self._scene = Scene()
         self._application = application
+        self._camera_tool = None
+        self._selection_tool = None
 
-        self._active_view = None  # type: Optional[View]
-        self._views = {}  # type: Dict[str, View]
+        self._tools_enabled = True
 
-        self._active_tool = None  # type: Optional[Tool]
-        self._tool_operation_active = False
-        self._tools = {}  # type: Dict[str, Tool]
-        self._camera_tool = None #type: Optional[Tool]
-        self._selection_tool = None #type: Optional[Tool]
-        self._tools_enabled = True #type: bool
-
-        self._active_stage = None #type: Optional[Stage]
-        self._stages = {} #type: Dict[str, Stage]
-
-        self._input_devices = {} #type: Dict[str, InputDevice]
-
-        PluginRegistry.addType("stage", self.addStage)
         PluginRegistry.addType("view", self.addView)
         PluginRegistry.addType("tool", self.addTool)
         PluginRegistry.addType("input_device", self.addInputDevice)
 
+    ##  Get the application.
+    #   \returns Application \type {Application}
+    def getApplication(self):
+        return self._application
+
     ##  Add a view by name if it"s not already added.
     #   \param name \type{string} Unique identifier of view (usually the plugin name)
     #   \param view \type{View} The view to be added
-    def addView(self, view: View) -> None:
+    def addView(self, view: View):
         name = view.getPluginId()
         if name not in self._views:
             self._views[name] = view
@@ -88,7 +80,7 @@ class Controller:
 
     ##  Set the currently active view.
     #   \param name \type{string} The name of the view to set as active
-    def setActiveView(self, name: str) -> None:
+    def setActiveView(self, name: str):
         Logger.log("d", "Setting active view to %s", name)
         try:
             if self._active_view:
@@ -103,7 +95,7 @@ class Controller:
         except KeyError:
             Logger.log("e", "No view named %s found", name)
         except Exception as e:
-            Logger.logException("e", "An exception occurred while switching views: %s", str(e))
+            Logger.log("e", "An exception occurred while switching views: %s", str(e))
 
     ##  Emitted when the list of views changes.
     viewsChanged = Signal()
@@ -111,64 +103,9 @@ class Controller:
     ##  Emitted when the active view changes.
     activeViewChanged = Signal()
 
-    ##  Add a stage by name if it's not already added.
-    #   \param name \type{string} Unique identifier of stage (usually the plugin name)
-    #   \param stage \type{Stage} The stage to be added
-    def addStage(self, stage: Stage) -> None:
-        name = stage.getPluginId()
-        if name not in self._stages:
-            self._stages[name] = stage
-            self.stagesChanged.emit()
-
-    ##  Request stage by name. Returns None if no stage is found.
-    #   \param name \type{string} Unique identifier of stage (usually the plugin name)
-    #   \return Stage \type{Stage} if name was found, none otherwise.
-    def getStage(self, name: str) -> Optional[Stage]:
-        try:
-            return self._stages[name]
-        except KeyError:  # No such view
-            Logger.log("e", "Unable to find %s in stage list", name)
-            return None
-
-    ##  Return all stages.
-    #   \return stages \type{dict}
-    def getAllStages(self) -> Dict[str, Stage]:
-        return self._stages
-
-    ##  Request active stage. Returns None if there is no active stage
-    #   \return stage \type{Stage} if an stage is active, None otherwise.
-    def getActiveStage(self) -> Optional[Stage]:
-        return self._active_stage
-
-    ##  Set the currently active stage.
-    #   \param name \type{string} The name of the stage to set as active
-    def setActiveStage(self, name: str) -> None:
-        try:
-            # Don't actually change the stage if it is the current selected one.
-            if self._active_stage != self._stages[name]:
-                previous_stage = self._active_stage
-                Logger.log("d", "Setting active stage to %s", name)
-                self._active_stage = self._stages[name]
-
-                # If there is no error switching stages, then finish first the previous stage (if it exists) and start the new stage
-                if previous_stage is not None:
-                    previous_stage.onStageDeselected()
-                self._active_stage.onStageSelected()
-                self.activeStageChanged.emit()
-        except KeyError:
-            Logger.log("e", "No stage named %s found", name)
-        except Exception as e:
-            Logger.logException("e", "An exception occurred while switching stages: %s", str(e))
-
-    ##  Emitted when the list of stages changes.
-    stagesChanged = Signal()
-
-    ##  Emitted when the active stage changes.
-    activeStageChanged = Signal()
-
     ##  Add an input device (e.g. mouse, keyboard, etc) if it's not already added.
     #   \param device The input device to be added
-    def addInputDevice(self, device: InputDevice) -> None:
+    def addInputDevice(self, device: InputDevice):
         name = device.getPluginId()
         if name not in self._input_devices:
             self._input_devices[name] = device
@@ -189,15 +126,15 @@ class Controller:
     ##  Remove an input device from the list of input devices.
     #   Does nothing if the input device is not in the list.
     #   \param name \type{string} The name of the device to remove.
-    def removeInputDevice(self, name: str) -> None:
+    def removeInputDevice(self, name: str):
         if name in self._input_devices:
             self._input_devices[name].event.disconnect(self.event)
             del self._input_devices[name]
 
     ##  Request tool by name. Returns None if no view is found.
     #   \param name \type{string} Unique identifier of tool (usually the plugin name)
-    #   \return tool \type{Tool} if name was found, None otherwise.
-    def getTool(self, name: str) -> Optional["Tool"]:
+    #   \return tool \type{Tool} if name was found, none otherwise.
+    def getTool(self, name: str):
         try:
             return self._tools[name]
         except KeyError:  # No such tool
@@ -206,12 +143,12 @@ class Controller:
 
     ##  Get all tools
     #   \return tools \type{dict}
-    def getAllTools(self) -> Dict[str, "Tool"]:
+    def getAllTools(self):
         return self._tools
 
     ##  Add a Tool (transform object, translate object) if its not already added.
     #   \param tool \type{Tool} Tool to be added
-    def addTool(self, tool: "Tool") -> None:
+    def addTool(self, tool):
         name = tool.getPluginId()
         if name not in self._tools:
             self._tools[name] = tool
@@ -221,12 +158,12 @@ class Controller:
         else:
             Logger.log("w", "%s was already added to tool list. Unable to add it again.", name)
 
-    def _onToolOperationStarted(self, tool: "Tool") -> None:
+    def _onToolOperationStarted(self, tool):
         if not self._tool_operation_active:
             self._tool_operation_active = True
             self.toolOperationStarted.emit(tool)
 
-    def _onToolOperationStopped(self, tool: "Tool") -> None:
+    def _onToolOperationStopped(self, tool):
         if self._tool_operation_active:
             self._tool_operation_active = False
             self.toolOperationStopped.emit(tool)
@@ -237,20 +174,20 @@ class Controller:
         return self._tool_operation_active
 
     ##  Request active tool. Returns None if there is no active tool
-    #   \return Tool if a tool is active, None otherwise.
-    def getActiveTool(self) -> Optional["Tool"]:
+    #   \return Tool \type{Tool} if an tool is active, None otherwise.
+    def getActiveTool(self):
         return self._active_tool
 
     ##  Set the current active tool.
     #   The tool can be set by name of the tool or directly passing the tool object.
-    #   \param tool A tool object or the name of a tool.
-    def setActiveTool(self, tool: Optional[Union["Tool", str]]):
+    #   \param tool \type{Tool} or \type{string}
+    def setActiveTool(self, tool):
         from UM.Tool import Tool
         if self._active_tool:
             self._active_tool.event(ToolEvent(ToolEvent.ToolDeactivateEvent))
 
         if isinstance(tool, Tool) or tool is None:
-            new_tool = cast(Optional[Tool], tool)
+            new_tool = tool
         else:
             new_tool = self.getTool(tool)
 
@@ -272,8 +209,6 @@ class Controller:
                 Logger.log("w", "Controller does not have an active tool and could not default to Translate tool.")
 
         if tool_changed:
-            Selection.setFaceSelectMode(False)
-            Selection.clearFace()
             self.activeToolChanged.emit()
 
     ##  Emitted when the list of tools changes.
@@ -304,34 +239,33 @@ class Controller:
 
     ##  Process an event
     #   \param event \type{Event} event to be handle.
-    #   The event is first passed to the selection tool, then the active tool and finally the camera tool.
+    #   The event is first passed to the camera tool, then active tool and finally selection tool.
     #   If none of these events handle it (when they return something that does not evaluate to true)
     #   a context menu signal is emitted.
     def event(self, event: Event):
-        if self._selection_tool and self._selection_tool.event(event):
-            return
-
-        if self._active_tool and self._active_tool.event(event):
-            return
-
+        # First, try to perform camera control
         if self._camera_tool and self._camera_tool.event(event):
             return
 
         if self._tools and event.type == Event.KeyPressEvent:
-            event = cast(KeyEvent, event)
             from UM.Scene.Selection import Selection  # Imported here to prevent a circular dependency.
             if Selection.hasSelection():
                 for key, tool in self._tools.items():
                     if tool.getShortcutKey() is not None and event.key == tool.getShortcutKey():
                         self.setActiveTool(tool)
 
+        if self._selection_tool and self._selection_tool.event(event):
+            return
+
+        # If we are not doing camera control, pass the event to the active tool.
+        if self._active_tool and self._active_tool.event(event):
+            return
+
         if self._active_view:
             self._active_view.event(event)
 
-        if event.type == Event.MouseReleaseEvent:
-            event = cast(MouseEvent, event)
-            if MouseEvent.RightButton in event.buttons:
-                self.contextMenuRequested.emit(event.x, event.y)
+        if event.type == Event.MouseReleaseEvent and MouseEvent.RightButton in event.buttons:
+            self.contextMenuRequested.emit(event.x, event.y)
 
     contextMenuRequested = Signal()
 
@@ -341,16 +275,16 @@ class Controller:
     #   \param tool \type{Tool} or \type{string}
     #   \sa setSelectionTool
     #   \sa setActiveTool
-    def setCameraTool(self, tool: Union["Tool", str]):
+    def setCameraTool(self, tool):
         from UM.Tool import Tool
         if isinstance(tool, Tool) or tool is None:
-            self._camera_tool = cast(Optional[Tool], tool)
+            self._camera_tool = tool
         else:
             self._camera_tool = self.getTool(tool)
 
     ##  Get the camera tool (if any)
     #   \returns camera tool (or none)
-    def getCameraTool(self) -> Optional["Tool"]:
+    def getCameraTool(self):
         return self._camera_tool
 
     ##  Set the tool used for performing selections.
@@ -359,84 +293,15 @@ class Controller:
     #   \param tool \type{Tool} or \type{string}
     #   \sa setCameraTool
     #   \sa setActiveTool
-    def setSelectionTool(self, tool: Union[str, "Tool"]):
+    def setSelectionTool(self, tool):
         from UM.Tool import Tool
         if isinstance(tool, Tool) or tool is None:
-            self._selection_tool = cast(Optional[Tool], tool)
+            self._selection_tool = tool
         else:
             self._selection_tool = self.getTool(tool)
 
-    def getToolsEnabled(self) -> bool:
+    def getToolsEnabled(self):
         return self._tools_enabled
 
-    def setToolsEnabled(self, enabled: bool) -> None:
+    def setToolsEnabled(self, enabled):
         self._tools_enabled = enabled
-
-    def deleteAllNodesWithMeshData(self, only_selectable:bool = True) -> None:
-        Logger.log("i", "Clearing scene")
-        if not self.getToolsEnabled():
-            return
-
-        nodes = []
-        for node in DepthFirstIterator(self.getScene().getRoot()):
-            if not node.isEnabled():
-                continue
-            if not node.getMeshData() and not node.callDecoration("isGroup"):
-                continue  # Node that doesnt have a mesh and is not a group.
-            if only_selectable and not node.isSelectable():
-                continue  # Only remove nodes that are selectable.
-            if node.getParent() and cast(SceneNode, node.getParent()).callDecoration("isGroup"):
-                continue  # Grouped nodes don't need resetting as their parent (the group) is resetted)
-            nodes.append(node)
-        if nodes:
-            from UM.Operations.GroupedOperation import GroupedOperation
-            op = GroupedOperation()
-
-            for node in nodes:
-                from UM.Operations.RemoveSceneNodeOperation import RemoveSceneNodeOperation
-                op.addOperation(RemoveSceneNodeOperation(node))
-
-                # Reset the print information
-                self.getScene().sceneChanged.emit(node)
-
-            op.push()
-            from UM.Scene.Selection import Selection
-            Selection.clear()
-
-    # Rotate camera view according defined angle
-    def setCameraRotation(self, coordinate: str = "x", angle: int = 0) -> None:
-        camera = self._scene.getActiveCamera()
-        if not camera:
-            return
-        camera.setZoomFactor(camera.getDefaultZoomFactor())
-        self._camera_tool.setOrigin(Vector(0, 100, 0))  # type: ignore
-        if coordinate == "home":
-            camera.setPosition(Vector(0, 100, 700))
-            camera.lookAt(Vector(0, 100, 0))
-            self._camera_tool.rotateCamera(0, 0)  # type: ignore
-        elif coordinate == "3d":
-            camera.setPosition(Vector(-750, 600, 700))
-            camera.lookAt(Vector(0, 100, 100))
-            self._camera_tool.rotateCamera(0, 0)  # type: ignore
-        else:
-            # for comparison is == used, because might not store them at the same location
-            # https://stackoverflow.com/questions/1504717/why-does-comparing-strings-in-python-using-either-or-is-sometimes-produce
-
-            if coordinate == "x":
-                camera.setPosition(Vector(0, 100, 700))
-                camera.lookAt(Vector(0, 100, 0))
-                self._camera_tool.rotateCamera(angle, 0)  # type: ignore
-            elif coordinate == "y":
-                if angle == 90:
-                    # Prepare the camera for top view, so no rotation has to be applied after setting the top view.
-                    camera.setPosition(Vector(0, 100, 100))
-                    camera.lookAt(Vector(0, 100, 0))
-                    self._camera_tool.rotateCamera(90, 0)  # type: ignore
-                    # Actually set the top view.
-                    camera.setPosition(Vector(0, 800, 1))
-                    camera.lookAt(Vector(0, 100, 1))
-                    self._camera_tool.rotateCamera(0, 0)  # type: ignore
-                else:
-                    camera.setPosition(Vector(0, 100, 700))
-                    camera.lookAt(Vector(0, 100, 0))
-                    self._camera_tool.rotateCamera(0, angle)  # type: ignore

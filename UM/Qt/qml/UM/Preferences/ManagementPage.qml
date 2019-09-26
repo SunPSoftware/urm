@@ -1,5 +1,5 @@
-// Copyright (c) 2018 Ultimaker B.V.
-// Uranium is released under the terms of the LGPLv3 or higher.
+// Copyright (c) 2015 Ultimaker B.V.
+// Uranium is released under the terms of the AGPLv3 or higher.
 
 import QtQuick 2.1
 import QtQuick.Controls 1.1
@@ -15,7 +15,6 @@ PreferencesPage
     property alias section: objectList.section;
     property alias delegate: objectList.delegate;
     property string nameRole: "name";
-    property string sectionRole: "group"
     property bool detailsVisible: true;
 
     property variant objectList: objectList;
@@ -83,11 +82,10 @@ PreferencesPage
                 left: parent.left;
             }
 
-            width: base.detailsVisible ? Math.round(parent.width * 0.4) | 0 : parent.width;
+            width: base.detailsVisible ? (parent.width * 0.4) | 0 : parent.width;
             frameVisible: true;
 
-            Rectangle
-            {
+            Rectangle {
                 parent: viewport
                 anchors.fill: parent
                 color: palette.light
@@ -104,7 +102,7 @@ PreferencesPage
                     base.currentItem = (currentIndex != null) ? model.getItem(currentIndex) : null;
                 }
 
-                section.property: base.sectionRole
+                section.property: "group"
                 section.criteria: ViewSection.FullString
                 section.delegate: Rectangle
                 {
@@ -124,8 +122,8 @@ PreferencesPage
 
                 delegate: Rectangle
                 {
-                    width: objectListContainer.viewport.width
-                    height: Math.round(childrenRect.height)
+                    width: objectListContainer.viewport.width;
+                    height: childrenRect.height;
                     color: ListView.isCurrentItem ? palette.highlight : index % 2 ? palette.base : palette.alternateBase
 
                     Label
@@ -178,24 +176,12 @@ PreferencesPage
         {
             target: objectList.model
 
-            onItemsChanged:
+            onDataChanged:
             {
-                var itemIndex = -1;
-                if (base.currentItem === null)
+                if(topLeft.row <= objectList.currentIndex || bottomRight.row <= objectList.currentIndex)
                 {
-                    return;
+                    base.currentItem = objectList.currentItem != null ? objectList.model.getItem(objectList.currentIndex) : null;
                 }
-                for (var i = 0; i < objectList.model.count; ++i)
-                {
-                    if (objectList.model.getItem(i).id == base.currentItem.id)
-                    {
-                        itemIndex = i;
-                        break;
-                    }
-                }
-
-                objectList.currentIndex = itemIndex;
-                base.currentItem = itemIndex >= 0 ? objectList.model.getItem(itemIndex) : null;
             }
         }
     }

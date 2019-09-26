@@ -1,34 +1,23 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2016 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
-from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import List, Dict, Any, Optional
 
 import UM.Decorators
-from UM.Logger import Logger
 from UM.Signal import Signal
-from UM.Settings.PropertyEvaluationContext import PropertyEvaluationContext
-
-if TYPE_CHECKING:
-    from UM.Application import Application
-    from UM.Settings.InstanceContainer import InstanceContainer
-    from UM.Settings.SettingDefinition import SettingDefinition
 
 
 ##  Shared interface between setting container types
 #
 @UM.Decorators.interface
 class ContainerInterface:
-
-    def __init__(self, *args, **kwargs):
-        pass
-
     ##  Get the ID of the container.
     #
     #   The ID should be unique, machine readable and machine writable. It is
     #   intended to be used for example when referencing the container in
     #   configuration files or when writing a file to disk.
     #
-    #   \return The unique ID of this container.
+    #   \return \type{string} The unique ID of this container.
     def getId(self) -> str:
         pass
 
@@ -37,8 +26,15 @@ class ContainerInterface:
     #   This should return a human-readable name for the container, that can be
     #   used in the interface.
     #
-    #   \return The name of this container.
+    #   \return \type{string} The name of this container.
     def getName(self) -> str:
+        pass
+
+    ##  Get whether the container item is stored on a read only location in the filesystem.
+    #
+    #   \return True if the specified item is stored on a read-only location
+    #   in the filesystem
+    def isReadOnly(self) -> bool:
         pass
 
     ##  Get all metadata of this container.
@@ -46,13 +42,13 @@ class ContainerInterface:
     #   This returns a dictionary containing all the metadata for this container.
     #   How this metadata is used depends on the application.
     #
-    #   \return The metadata for this container.
+    #   \return \type{dict} The metadata for this container.
     def getMetaData(self) -> Dict[str, Any]:
         pass
 
     ##  Get the value of a single metadata entry.
     #
-    #   \param entry The key of the metadata to retrieve.
+    #   \param entry \type{string} The key of the metadata to retrieve.
     #   \param default The default value to return if the entry cannot be found.
     #
     #   \return The value of the metadata corresponding to `name`, or `default`
@@ -61,10 +57,12 @@ class ContainerInterface:
         pass
 
     ##  Get the value of a property of the container item.
-    #   \param key The key of the item to retrieve a property from.
-    #   \param property_name The name of the property to retrieve.
+    #
+    #   \param key \type{string} The key of the item to retrieve a property from.
+    #   \param name \type{string} The name of the property to retrieve.
+    #
     #   \return The specified property value of the container item corresponding to key, or None if not found.
-    def getProperty(self, key: str, property_name: str, context: Optional[PropertyEvaluationContext] = None) -> Any:
+    def getProperty(self, key: str, property_name: str) -> Any:
         pass
 
     ##  Get whether the container item has a specific property.
@@ -77,83 +75,48 @@ class ContainerInterface:
     def hasProperty(self, key: str, property_name: str) -> bool:
         pass
 
-    ##  Get all the setting keys known to this container.
-    #   \return Set of keys.
-    def getAllKeys(self) -> Set[str]:
-        pass
-
     ##  Serialize this container to a string.
     #
     #   The serialized representation of the container can be used to write the
     #   container to disk or send it over the network.
     #
-    #   \param ignored_metadata_keys A set of keys that should be ignored when
-    #   it serializes the metadata.
+    #   \param ignored_metadata_keys A list of keys that should be ignored when it serializes the metadata.
     #
-    #   \return A string representation of this container.
-    def serialize(self, ignored_metadata_keys: Optional[set] = None) -> str:
-        pass
-
-    ##  Change a property of a container item.
-    #   \param key The key of the item to change the property of.
-    #   \param property_name The name of the property to change.
-    #   \param property_value The new value of the property.
-    #   \param container The container to use for retrieving values when
-    #   changing the property triggers property updates. Defaults to None, which
-    #   means use the current container.
-    #   \param set_from_cache Flag to indicate that the property was set from
-    #   cache. This triggers the behavior that the read_only and setDirty are
-    #   ignored.
-    def setProperty(self, key: str, property_name: str, property_value: Any, container: "ContainerInterface" = None, set_from_cache: bool = False) -> None:
+    #   \return \type{string} A string representation of this container.
+    def serialize(self, ignored_metadata_keys: Optional[List] = None) -> str:
         pass
 
     ##  Deserialize the container from a string representation.
     #
     #   This should replace the contents of this container with those in the serialized
-    #   representation.
+    #   represenation.
     #
     #   \param serialized A serialized string containing a container that should be deserialized.
-    def deserialize(self, serialized: str, file_name: Optional[str] = None) -> str:
-        return self._updateSerialized(serialized, file_name = file_name)
-
-    ##  Deserialize just the metadata from a string representation.
-    #
-    #   \param serialized A string representing one or more containers that
-    #   should be deserialized.
-    #   \param container_id The ID of the (base) container is already known and
-    #   provided here.
-    #   \return A list of the metadata of all containers found in the document.
-    @classmethod
-    def deserializeMetadata(cls, serialized: str, container_id: str) -> List[Dict[str, Any]]:
-        Logger.log("w", "Class {class_name} hasn't implemented deserializeMetadata!".format(class_name = cls.__name__))
-        return []
+    def deserialize(self, serialized: str) -> str:
+        return self.__updateSerialized(serialized)
 
     ##  Updates the given serialized data to the latest version.
-    @classmethod
-    def _updateSerialized(cls, serialized: str, file_name: Optional[str] = None) -> str:
-        configuration_type = cls.getConfigurationTypeFromSerialized(serialized)
-        version = cls.getVersionFromSerialized(serialized)
+    def __updateSerialized(self, serialized: str) -> str:
+        configuration_type = self.getConfigurationTypeFromSerialized(serialized)
+        version = self.getVersionFromSerialized(serialized)
         if configuration_type is not None and version is not None:
             from UM.VersionUpgradeManager import VersionUpgradeManager
             result = VersionUpgradeManager.getInstance().updateFilesData(configuration_type, version,
-                                                                         [serialized],
-                                                                         [file_name if file_name else ""])
+                                                                         [serialized], [""])
             if result is not None:
                 serialized = result.files_data[0]
         return serialized
 
     @classmethod
     def getLoadingPriority(cls) -> int:
-        return 9001 #Goku wins!
+        return 9001
 
     ##  Gets the configuration type of the given serialized data. (used by __updateSerialized())
-    @classmethod
-    def getConfigurationTypeFromSerialized(cls, serialized: str) -> Optional[str]:
+    def getConfigurationTypeFromSerialized(self, serialized: str) -> Optional[str]:
         pass
 
     ##  Gets the version of the given serialized data. (used by __updateSerialized())
-    @classmethod
-    def getVersionFromSerialized(cls, serialized: str) -> Optional[int]:
+    def getVersionFromSerialized(self, serialized: str) -> Optional[int]:
         pass
 
     ##  Get the path used to create this InstanceContainer.
@@ -164,39 +127,17 @@ class ContainerInterface:
     def setPath(self, path: str) -> None:
         pass
 
-    def isDirty(self) -> bool:
-        pass
-
     propertyChanged = None   # type: Signal
 
     metaDataChanged = None  # type: Signal
 
 
-@UM.Decorators.interface
 class DefinitionContainerInterface(ContainerInterface):
-    def findDefinitions(self, **kwargs: Any) -> List["SettingDefinition"]:
-        raise NotImplementedError()
-
-    def setProperty(self, key: str, property_name: str, property_value: Any, container: "ContainerInterface" = None, set_from_cache: bool = False) -> None:
-        raise TypeError("Can't change properties in definition containers.")
+    pass
 
 
 ##  Shared interface between setting container types
 #
 @UM.Decorators.interface
 class ContainerRegistryInterface:
-    def findContainers(self, *, ignore_case: bool = False, **kwargs: Any) -> List[ContainerInterface]:
-        raise NotImplementedError()
-
-    def findDefinitionContainers(self, **kwargs: Any) -> List[DefinitionContainerInterface]:
-        raise NotImplementedError()
-
-    @classmethod
-    def getApplication(cls) -> "Application":
-        raise NotImplementedError()
-
-    def getEmptyInstanceContainer(self) -> "InstanceContainer":
-        raise NotImplementedError()
-
-    def isReadOnly(self, container_id: str) -> bool:
-        raise NotImplementedError()
+    def findDefinitionContainers(self, **kwargs: Any) -> List[DefinitionContainerInterface]: pass

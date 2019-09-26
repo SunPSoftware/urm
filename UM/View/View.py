@@ -1,48 +1,27 @@
-# Copyright (c) 2019 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
-from typing import Optional, Union, Dict
-
-from PyQt5.QtCore import QUrl, QObject, pyqtProperty
-
-from UM.View.Renderer import Renderer
 from UM.PluginObject import PluginObject
-
 import UM.Application
-
-MYPY = False
-if MYPY:
-    from UM.Controller import Controller
 
 
 ## Abstract base class for view objects.
-class View(QObject, PluginObject):
-    def __init__(self, parent = None):
-        super().__init__(parent)
-        self._renderer = None  # type: Optional[Renderer]
-        self._controller = UM.Application.Application.getInstance().getController()  # type: Controller
-        self._components = {}  # type: Dict[str, QUrl]
-
-    @pyqtProperty(str, constant = True)
-    def name(self) -> str:
-        return self.getPluginId()
-
-    ##  Add a QML component that is provided by this View.
-    def addDisplayComponent(self, name: str, source: Union[str, QUrl]) -> None:
-        if type(source) == str:
-            source = QUrl.fromLocalFile(source)
-        self._components[name] = source
-
-    ##  Get a QUrl by name.
-    def getDisplayComponent(self, name: str) -> QUrl:
-        if name in self._components:
-            return self._components[name]
-        return QUrl()
+class View(PluginObject):
+    def __init__(self):
+        super().__init__()
+        self._renderer = None
+        self._controller = UM.Application.Application.getInstance().getController()
 
     ##  Get the controller object associated with this View.
     #   \sa Controller
     def getController(self):
         return self._controller
+
+    ##  Set the controller object associated with this View.
+    #   \param controller The controller object to use.
+    #   \sa Controller
+    def setController(self, controller):
+        self._controller = controller
 
     ##  Get the Renderer instance for this View.
     def getRenderer(self):
@@ -50,20 +29,20 @@ class View(QObject, PluginObject):
 
     ##  Set the renderer object to use with this View.
     #   \param renderer \type{Renderer} The renderer to use.
-    def setRenderer(self, renderer: Renderer) -> None:
+    def setRenderer(self, renderer):
         self._renderer = renderer
 
     ##  Begin the rendering process.
     #
     #   This should queue all the meshes that should be rendered.
-    def beginRendering(self) -> None:
+    def beginRendering(self):
         raise NotImplementedError()
 
     ##  Perform any steps needed when ending the rendering process.
     #
     #   If there is any cleanup or other tasks that need to be performed
     #   after rendering this method should be used.
-    def endRendering(self) -> None:
+    def endRendering(self):
         raise NotImplementedError()
     
     ##  Handle an event.

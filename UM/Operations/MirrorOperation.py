@@ -1,5 +1,5 @@
 # Copyright (c) 2015 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from . import Operation
 from UM.Scene.SceneNode import SceneNode
@@ -63,4 +63,4 @@ class MirrorOperation(Operation.Operation):
     #
     #   \return A programmer-readable representation of this operation.
     def __repr__(self):
-        return "MirrorOp.(node={0},mirror={1})".format(self._node, self._mirror)
+        return "MirrorOperation(node = {0}, mirror={1})".format(self._node, self._mirror)

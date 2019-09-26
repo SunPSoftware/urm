@@ -1,31 +1,25 @@
-// Copyright (c) 2017 Ultimaker B.V.
-// Uranium is released under the terms of the LGPLv3 or higher.
+// Copyright (c) 2015 Ultimaker B.V.
+// Uranium is released under the terms of the AGPLv3 or higher.
 
-import QtQuick 2.10
-import QtQuick.Window 2.2
-import QtQuick.Layouts 1.3
+import QtQuick 2.2
+import QtQuick.Window 2.1
+import QtQuick.Layouts 1.1
 
 import UM 1.0 as UM
 
-
-Window
-{
+Window {
     id: base
 
     modality: Qt.ApplicationModal;
     flags: Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowCloseButtonHint;
 
-    minimumWidth: screenScaleFactor * 640;
-    minimumHeight: screenScaleFactor * 480;
-    width: minimumWidth
-    height: minimumHeight
+    width: Screen.devicePixelRatio * 640;
+    height: Screen.devicePixelRatio * 480;
 
-    property int margin: screenScaleFactor * 8;
+    property int margin: Screen.devicePixelRatio * 8;
     property bool closeOnAccept: true;  // Automatically close the window when the window is "accepted" (eg using the return key)
 
     default property alias contents: contentItem.children;
-
-    property alias loader: contentLoader
 
     property alias leftButtons: leftButtonRow.children;
     property alias rightButtons: rightButtonRow.children;
@@ -41,12 +35,8 @@ Window
     }
 
     function reject() {
-        //If we don't have a close button we don't want to allow the user to close the window by rejecting it (escape key).
-        if (base.flags & Qt.WindowCloseButtonHint)
-        {
-            base.visible = false;
-            base.rejected();
-        }
+        base.visible = false;
+        base.rejected();
     }
 
     function open() {
@@ -59,13 +49,8 @@ Window
 
         focus: base.visible;
 
-        Keys.onEscapePressed:{
-            base.reject();
-        }
-
-        Keys.onReturnPressed: {
-            base.accept();
-        }
+        Keys.onEscapePressed: base.reject();
+        Keys.onReturnPressed: base.accept();
 
         Item {
             id: contentItem;
@@ -79,14 +64,6 @@ Window
                 topMargin: base.margin;
                 bottom: buttonRow.top;
                 bottomMargin: base.margin;
-            }
-
-            Loader
-            {
-                id: contentLoader
-                anchors.fill: parent
-                active: source != ""
-                property var manager: null
             }
         }
 

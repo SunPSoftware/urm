@@ -1,7 +1,7 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
-from PyQt5.QtGui import QImage, QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
+from PyQt5.QtGui import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
 
 ##  An interface for OpenGL FrameBuffer Objects.
 #
@@ -18,20 +18,20 @@ class FrameBufferObject:
         self._contents = None
 
     ##  Get the texture ID of the texture target of this FBO.
-    def getTextureId(self) -> int:
+    def getTextureId(self):
         return self._fbo.texture()
 
     ##  Bind the FBO so it can be rendered to.
-    def bind(self) -> None:
+    def bind(self):
         self._contents = None
         self._fbo.bind()
 
     ##  Release the FBO so it will no longer be rendered to.
-    def release(self) -> None:
+    def release(self):
         self._fbo.release()
 
     ##  Get the contents of the FBO as an image data object.
-    def getContents(self) -> QImage:
+    def getContents(self):
         if not self._contents:
             self._contents = self._fbo.toImage()
 

@@ -1,5 +1,5 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from UM.Signal import Signal, signalemitter
 from UM.PluginObject import PluginObject
@@ -9,7 +9,7 @@ from UM.PluginObject import PluginObject
 #   Examples of this are mouse & keyboard
 @signalemitter
 class InputDevice(PluginObject):
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
 
     ##  Emitted whenever the device produces an event.

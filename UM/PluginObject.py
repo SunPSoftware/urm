@@ -1,6 +1,5 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
-from typing import Optional
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 
 ##  Base class for objects that can be provided by a plugin.
@@ -9,23 +8,11 @@ from typing import Optional
 #   by a plugin. Its only function is to serve as a mapping between
 #   the plugin and the object.
 class PluginObject:
-    def __init__(self) -> None:
-        self._plugin_id = None  # type: Optional[str]
-        self._version = None  # type: Optional[str]
+    def __init__(self):
+        self._plugin_id = None
 
-    def setPluginId(self, plugin_id: str) -> None:
-        self._plugin_id = plugin_id
-
-    def getPluginId(self) -> str:
-        if not self._plugin_id:
-            raise ValueError("The plugin ID needs to be set before the plugin can be used")
+    def getPluginId(self):
         return self._plugin_id
 
-    def setVersion(self, version: str) -> None:
-        self._version = version
-
-    def getVersion(self) -> str:
-        if not self._version:
-            raise ValueError("The plugin version needs to be set before the plugin can be used")
-        return self._version
-
+    def setPluginId(self, plugin_id):
+        self._plugin_id = plugin_id

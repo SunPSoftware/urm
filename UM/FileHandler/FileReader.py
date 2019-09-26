@@ -1,5 +1,5 @@
 # Copyright (c) 2016 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 import os
 from enum import Enum
@@ -25,12 +25,10 @@ class FileReader(PluginObject):
     #
     #   \return boolean indication if this plugin accepts the file specified.
     def acceptsFile(self, file_name):
-        file_name_lower = file_name.lower()
-        is_supported = False
-        for extension in self._supported_extensions:
-            if file_name_lower.endswith(extension):
-                is_supported = True
-        return is_supported
+        extension = os.path.splitext(file_name)[1]
+        if extension.lower() in self._supported_extensions:
+            return True
+        return False
 
     ##  Executed before reading the file. This is used, for example, to display an import
     #   configuration dialog. If a plugin displays such a dialog,

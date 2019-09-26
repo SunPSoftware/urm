@@ -1,30 +1,30 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
-
-import json
-import os
-import sys
-from typing import Dict, Optional, List
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from PyQt5.QtCore import QObject, pyqtProperty, pyqtSignal, QCoreApplication, QUrl, QSizeF
-from PyQt5.QtGui import QColor, QFont, QFontMetrics, QFontDatabase
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QFontDatabase, QFontInfo
 from PyQt5.QtQml import QQmlComponent, QQmlContext
-
-import UM.Application
 from UM.FlameProfiler import pyqtSlot
+import json
+import os
+import os.path
+import sys
+
 from UM.Logger import Logger
 from UM.Resources import Resources
-
+from UM.Preferences import Preferences
+from UM.Application import Application
+from UM.Decorators import deprecated
 
 class Theme(QObject):
-    def __init__(self, engine, parent = None) -> None:
+    def __init__(self, engine, parent = None):
         super().__init__(parent)
 
         self._engine = engine
-        self._styles = None  # type: Optional[QObject]
+        self._styles = None
         self._path = ""
-        self._icons = {}  # type: Dict[str, QUrl]
-        self._images = {}  # type: Dict[str, QUrl]
+        self._icons = {}
+        self._images = {}
 
         # Workaround for incorrect default font on Windows
         if sys.platform == "win32":
@@ -33,41 +33,26 @@ class Theme(QObject):
             QCoreApplication.instance().setFont(default_font)
 
         self._em_height = int(QFontMetrics(QCoreApplication.instance().font()).ascent())
-        self._em_width = self._em_height
-
-        # Cache the initial language in the preferences. For fonts, a special font can be defined with, for example,
-        # "medium" and "medium_nl_NL". If the special one exists, getFont() will return that, otherwise the default
-        # will be returned. We cache the initial language here is because Cura can only change its language if it gets
-        # restarted, so we need to keep the fonts consistent in a single Cura run.
-        self._preferences = UM.Application.Application.getInstance().getPreferences()
-        self._lang_code = self._preferences.getValue("general/language")
+        self._em_width = self._em_height;
 
         self._initializeDefaults()
 
-        self.reload()
-
-    themeLoaded = pyqtSignal()
-
-    def reload(self):
-        self._styles = None
-        self._path = ""
-        self._icons = {}
-        self._images = {}
-        application = UM.Application.Application.getInstance()
-        application.getPreferences().addPreference("general/theme", application.default_theme)
+        Preferences.getInstance().addPreference("general/theme", Application.getInstance().getApplicationName())
         try:
-            theme_path = Resources.getPath(Resources.Themes, application.getPreferences().getValue("general/theme"))
+            theme_path = Resources.getPath(Resources.Themes, Preferences.getInstance().getValue("general/theme"))
             self.load(theme_path)
         except FileNotFoundError:
             Logger.log("e", "Could not find theme file, resetting to the default theme.")
 
             # cannot the current theme, so go back to the default
-            application.getPreferences().setValue("general/theme", application.default_theme)
-            theme_path = Resources.getPath(Resources.Themes, application.getPreferences().getValue("general/theme"))
+            Preferences.getInstance().setValue("general/theme", Application.getInstance().getApplicationName())
+            theme_path = Resources.getPath(Resources.Themes, Preferences.getInstance().getValue("general/theme"))
             self.load(theme_path)
 
+    themeLoaded = pyqtSignal()
+
     @pyqtSlot(result = "QVariantList")
-    def getThemes(self) -> List[Dict[str, str]]:
+    def getThemes(self):
         themes = []
         for path in Resources.getAllPathsForType(Resources.Themes):
             try:
@@ -77,7 +62,7 @@ class Theme(QObject):
                     if os.path.isdir(folder) and os.path.isfile(theme_file):
                         theme_id = os.path.basename(folder)
 
-                        with open(theme_file, encoding = "utf-8") as f:
+                        with open(theme_file) as f:
                             try:
                                 data = json.load(f)
                             except json.decoder.JSONDecodeError:
@@ -101,7 +86,7 @@ class Theme(QObject):
         return themes
 
     @pyqtSlot(str, result = "QColor")
-    def getColor(self, color: str) -> QColor:
+    def getColor(self, color):
         if color in self._colors:
             return self._colors[color]
 
@@ -109,7 +94,7 @@ class Theme(QObject):
         return QColor()
 
     @pyqtSlot(str, result = "QSizeF")
-    def getSize(self, size) -> QSizeF:
+    def getSize(self, size):
         if size in self._sizes:
             return self._sizes[size]
 
@@ -117,16 +102,15 @@ class Theme(QObject):
         return QSizeF()
 
     @pyqtSlot(str, result = "QUrl")
-    def getIcon(self, icon_name: str) -> QUrl:
+    def getIcon(self, icon_name):
         if icon_name in self._icons:
             return self._icons[icon_name]
 
-        # We don't log this anymore since we have new fallback behavior to load the icon from a plugin folder
-        # Logger.log("w", "No icon %s defined in Theme", icon_name)
+        Logger.log("w", "No icon %s defined in Theme", icon_name)
         return QUrl()
 
     @pyqtSlot(str, result = "QUrl")
-    def getImage(self, image_name: str) -> QUrl:
+    def getImage(self, image_name):
         if image_name in self._images:
             return self._images[image_name]
 
@@ -134,11 +118,7 @@ class Theme(QObject):
         return QUrl()
 
     @pyqtSlot(str, result = "QFont")
-    def getFont(self, font_name: str) -> QFont:
-        lang_specific_font_name = "%s_%s" % (font_name, self._lang_code)
-        if lang_specific_font_name in self._fonts:
-            return self._fonts[lang_specific_font_name]
-
+    def getFont(self, font_name):
         if font_name in self._fonts:
             return self._fonts[font_name]
 
@@ -149,53 +129,74 @@ class Theme(QObject):
     def styles(self):
         return self._styles
 
+    @pyqtProperty("QVariantMap", notify = themeLoaded)
+    @deprecated("Use getIcon for performance reasons", "2.1")
+    def icons(self):
+        return self._icons
+
+    @pyqtProperty("QVariantMap", notify = themeLoaded)
+    @deprecated("Use getImage for performance reasons", "2.1")
+    def images(self):
+        return self._images
+
+    @pyqtProperty("QVariantMap", notify = themeLoaded)
+    @deprecated("Use getColor for performance reasons", "2.1")
+    def colors(self):
+        return self._colors
+
+    @pyqtProperty("QVariantMap", notify = themeLoaded)
+    @deprecated("Use getFont for performance reasons", "2.1")
+    def fonts(self):
+        return self._fonts
+
+    @pyqtProperty("QVariantMap", notify = themeLoaded)
+    @deprecated("Use getSize for performance reasons", "2.1")
+    def sizes(self):
+        return self._sizes
+
     @pyqtSlot(str)
-    def load(self, path: str, is_first_call: bool = True) -> None:
+    def load(self, path):
         if path == self._path:
             return
 
-        with open(os.path.join(path, "theme.json"), encoding = "utf-8") as f:
-            Logger.log("d", "Loading theme file: %s", os.path.join(path, "theme.json"))
+        self._path = path
+
+        with open(os.path.join(self._path, "theme.json")) as f:
+            Logger.log("d", "Loading theme file: %s", os.path.join(self._path, "theme.json"))
             data = json.load(f)
 
         # Iteratively load inherited themes
         try:
             theme_id = data["metadata"]["inherits"]
-            self.load(Resources.getPath(Resources.Themes, theme_id), is_first_call = False)
+            self.load(Resources.getPath(Resources.Themes, theme_id))
         except FileNotFoundError:
             Logger.log("e", "Could not find inherited theme %s", theme_id)
         except KeyError:
-            pass  # No metadata or no inherits keyword in the theme.json file
+            pass # No metadata or no inherits keyword in the theme.json file
 
         if "colors" in data:
             for name, color in data["colors"].items():
                 c = QColor(color[0], color[1], color[2], color[3])
                 self._colors[name] = c
 
-        fonts_dir = os.path.join(path, "fonts")
-        if os.path.isdir(fonts_dir):
-            for root, dirnames, filenames in os.walk(fonts_dir):
-                for filename in filenames:
-                    if filename.lower().endswith(".ttf"):
-                        QFontDatabase.addApplicationFont(os.path.join(root, filename))
+        fontsdir = os.path.join(self._path, "fonts")
+        if os.path.isdir(fontsdir):
+            for file in os.listdir(fontsdir):
+                if "ttf" in file:
+                    QFontDatabase.addApplicationFont(os.path.join(fontsdir, file))
 
         if "fonts" in data:
-            system_font_size = QCoreApplication.instance().font().pointSize()
             for name, font in data["fonts"].items():
-                q_font = QFont()
-                q_font.setFamily(font.get("family", QCoreApplication.instance().font().family()))
+                f = QFont()
+                f.setFamily(font.get("family", QCoreApplication.instance().font().family()))
 
-                if font.get("bold"):
-                    q_font.setBold(font.get("bold", False))
-                else:
-                    q_font.setWeight(font.get("weight", 50))
+                f.setBold(font.get("bold", False))
+                f.setLetterSpacing(QFont.AbsoluteSpacing, font.get("letterSpacing", 0))
+                f.setItalic(font.get("italic", False))
+                f.setPixelSize(font.get("size", 1) * self._em_height)
+                f.setCapitalization(QFont.AllUppercase if font.get("capitalize", False) else QFont.MixedCase)
 
-                q_font.setLetterSpacing(QFont.AbsoluteSpacing, font.get("letterSpacing", 0))
-                q_font.setItalic(font.get("italic", False))
-                q_font.setPointSize(int(font.get("size", 1) * system_font_size))
-                q_font.setCapitalization(QFont.AllUppercase if font.get("capitalize", False) else QFont.MixedCase)
-
-                self._fonts[name] = q_font
+                self._fonts[name] = f
 
         if "sizes" in data:
             for name, size in data["sizes"].items():
@@ -205,19 +206,19 @@ class Theme(QObject):
 
                 self._sizes[name] = s
 
-        iconsdir = os.path.join(path, "icons")
+        iconsdir = os.path.join(self._path, "icons")
         if os.path.isdir(iconsdir):
             for icon in os.listdir(iconsdir):
                 name = os.path.splitext(icon)[0]
                 self._icons[name] = QUrl.fromLocalFile(os.path.join(iconsdir, icon))
 
-        imagesdir = os.path.join(path, "images")
+        imagesdir = os.path.join(self._path, "images")
         if os.path.isdir(imagesdir):
             for image in os.listdir(imagesdir):
                 name = os.path.splitext(image)[0]
                 self._images[name] = QUrl.fromLocalFile(os.path.join(imagesdir, image))
 
-        styles = os.path.join(path, "styles.qml")
+        styles = os.path.join(self._path, "styles.qml")
         if os.path.isfile(styles):
             c = QQmlComponent(self._engine, styles)
             context = QQmlContext(self._engine, self._engine)
@@ -228,14 +229,10 @@ class Theme(QObject):
                 for error in c.errors():
                     Logger.log("e", error.toString())
 
-        Logger.log("d", "Loaded theme %s", path)
-        self._path = path
+        Logger.log("d", "Loaded theme %s", self._path)
+        self.themeLoaded.emit()
 
-        # only emit the theme loaded signal once after all the themes in the inheritance chain have been loaded
-        if is_first_call:
-            self.themeLoaded.emit()
-
-    def _initializeDefaults(self) -> None:
+    def _initializeDefaults(self):
         self._fonts = {
             "system": QCoreApplication.instance().font(),
             "fixed": QFontDatabase.systemFont(QFontDatabase.FixedFont)
@@ -260,7 +257,6 @@ class Theme(QObject):
         return Theme.__instance
 
     __instance = None   # type: 'Theme'
-
 
 def createTheme(engine, script_engine = None):
     return Theme.getInstance(engine)

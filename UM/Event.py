@@ -1,5 +1,5 @@
 # Copyright (c) 2016 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 ##  \file Event.py
 #   Contains the Event class and important subclasses used throughout UM.
@@ -7,7 +7,7 @@
 
 ##  Base event class.
 #   Defines the most basic interface for events and several constants to identify event types.
-from typing import List, Any, Callable, Optional
+from typing import List, Any, Callable
 
 
 class Event:
@@ -72,12 +72,12 @@ class MouseEvent(Event):
 
     ##  The X coordinate of the previous event.
     @property
-    def lastX(self) -> Optional[int]:
+    def lastX(self) -> int:
         return self._last_x
 
     ##  The Y coordinate of the previous event.
     @property
-    def lastY(self) -> Optional[int]:
+    def lastY(self) -> int:
         return self._last_y
 
     ##  The change in X position between this event and the previous event.

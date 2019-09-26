@@ -1,25 +1,19 @@
-# Copyright (c) 2019 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
-
+# Copyright (c) 2016 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 import configparser
 import io
-from typing import Any, cast, Dict, List, Optional, Set, Tuple
+from typing import Set, List, Optional, cast
 
 from PyQt5.QtCore import QObject, pyqtProperty, pyqtSignal
-
-from UM.Logger import Logger
-from PyQt5.QtQml import QQmlEngine
 import UM.FlameProfiler
 
-from UM.ConfigurationErrorMessage import ConfigurationErrorMessage
+from UM.Settings.SettingDefinition import SettingDefinition
 from UM.Signal import Signal, signalemitter
 from UM.PluginObject import PluginObject
+from UM.Logger import Logger
 from UM.MimeTypeDatabase import MimeTypeDatabase, MimeType
-from UM.Settings.ContainerFormatError import ContainerFormatError
 from UM.Settings.DefinitionContainer import DefinitionContainer #For getting all definitions in this stack.
 from UM.Settings.Interfaces import ContainerInterface, ContainerRegistryInterface
-from UM.Settings.PropertyEvaluationContext import PropertyEvaluationContext
-from UM.Settings.SettingDefinition import SettingDefinition
 from UM.Settings.SettingFunction import SettingFunction
 from UM.Settings.Validator import ValidatorState
 
@@ -30,7 +24,6 @@ class IncorrectVersionError(Exception):
 
 class InvalidContainerStackError(Exception):
     pass
-
 
 MimeTypeDatabase.addMimeType(
     MimeType(
@@ -52,48 +45,46 @@ MimeTypeDatabase.addMimeType(
 ##  A stack of setting containers to handle setting value retrieval.
 @signalemitter
 class ContainerStack(QObject, ContainerInterface, PluginObject):
-    Version = 4 # type: int
+    Version = 3 # type: int
 
     ##  Constructor
     #
-    #   \param stack_id A unique, machine readable/writable ID.
-    def __init__(self, stack_id: str) -> None:
-        super().__init__()
-        QQmlEngine.setObjectOwnership(self, QQmlEngine.CppOwnership)
+    #   \param stack_id \type{string} A unique, machine readable/writable ID.
+    def __init__(self, stack_id: str, *args, **kwargs):
+        # Note that we explicitly pass None as QObject parent here. This is to be able
+        # to support pickling.
+        super().__init__(parent = None, *args, **kwargs)
 
-        self._metadata = {
-            "id": stack_id,
-            "name": stack_id,
-            "version": self.Version,
-            "container_type": ContainerStack
-        } #type: Dict[str, Any]
+        self._id = str(stack_id)  # type: str
+        self._name = str(stack_id)  # type: str
+        self._metadata = {}
         self._containers = []  # type: List[ContainerInterface]
         self._next_stack = None  # type: Optional[ContainerStack]
         self._read_only = False  # type: bool
-        self._dirty = False  # type: bool
+        self._dirty = True  # type: bool
         self._path = ""  # type: str
-        self._postponed_emits = []  # type: List[Tuple[Signal, ContainerInterface]] # gets filled with 2-tuples: signal, signal_argument(s)
+        self._postponed_emits = []  # gets filled with 2-tuples: signal, signal_argument(s)
 
-        self._property_changes = {}  # type: Dict[str, Set[str]]
+        self._property_changes = {}
         self._emit_property_changed_queued = False  # type: bool
 
     ##  For pickle support
-    def __getnewargs__(self) -> Tuple[str]:
-        return (self.getId(),)
+    def __getnewargs__(self):
+        return (self._id,)
 
     ##  For pickle support
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self):
         return self.__dict__
 
     ##  For pickle support
-    def __setstate__(self, state: Dict[str, Any]) -> None:
+    def __setstate__(self, state):
         self.__dict__.update(state)
 
     ##  \copydoc ContainerInterface::getId
     #
     #   Reimplemented from ContainerInterface
     def getId(self) -> str:
-        return cast(str, self._metadata["id"])
+        return self._id
 
     id = pyqtProperty(str, fget = getId, constant = True)
 
@@ -101,16 +92,15 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     #
     #   Reimplemented from ContainerInterface
     def getName(self) -> str:
-        return str(self._metadata["name"])
+        return str(self._name)
 
     ##  Set the name of this stack.
     #
     #   \param name \type{string} The new name of the stack.
     def setName(self, name: str) -> None:
-        if name != self.getName():
-            self._metadata["name"] = name
+        if name != self._name:
+            self._name = name
             self.nameChanged.emit()
-            self.metaDataChanged.emit(self)
 
     ##  Emitted whenever the name of this stack changes.
     nameChanged = pyqtSignal()
@@ -122,7 +112,7 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     def isReadOnly(self) -> bool:
         return self._read_only
 
-    def setReadOnly(self, read_only: bool) -> None:
+    def setReadOnly(self, read_only):
         if read_only != self._read_only:
             self._read_only = read_only
             self.readOnlyChanged.emit()
@@ -133,25 +123,14 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     ##  \copydoc ContainerInterface::getMetaData
     #
     #   Reimplemented from ContainerInterface
-    def getMetaData(self) -> Dict[str, Any]:
+    def getMetaData(self):
         return self._metadata
 
     ##  Set the complete set of metadata
-    def setMetaData(self, meta_data: Dict[str, Any]) -> None:
-        if meta_data == self.getMetaData():
-            return #Unnecessary.
-
-        #We'll fill a temporary dictionary with all the required metadata and overwrite it with the new metadata.
-        #This way it is ensured that at least the required metadata is still there.
-        self._metadata = {
-            "id": self.getId(),
-            "name": self.getName(),
-            "version": self.getMetaData().get("version", 0),
-            "container_type": ContainerStack
-        }
-
-        self._metadata.update(meta_data)
-        self.metaDataChanged.emit(self)
+    def setMetaData(self, meta_data):
+        if meta_data != self._meta_data:
+            self._meta_data = meta_data
+            self.metaDataChanged.emit(self)
 
     metaDataChanged = pyqtSignal(QObject)
     metaData = pyqtProperty("QVariantMap", fget = getMetaData, fset = setMetaData, notify = metaDataChanged)
@@ -159,7 +138,7 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     ##  \copydoc ContainerInterface::getMetaDataEntry
     #
     #   Reimplemented from ContainerInterface
-    def getMetaDataEntry(self, entry: str, default: Any = None) -> Any:
+    def getMetaDataEntry(self, entry: str, default = None):
         value = self._metadata.get(entry, None)
 
         if value is None:
@@ -173,13 +152,23 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
         else:
             return value
 
-    def setMetaDataEntry(self, key: str, value: Any) -> None:
-        if key not in self._metadata or self._metadata[key] != value:
-            self._metadata[key] = value
+    def addMetaDataEntry(self, key: str, value):
+        if key not in self._metadata:
             self._dirty = True
+            self._metadata[key] = value
             self.metaDataChanged.emit(self)
+        else:
+            Logger.log("w", "Meta data with key %s was already added.", key)
 
-    def removeMetaDataEntry(self, key: str) -> None:
+    def setMetaDataEntry(self, key, value):
+        if key in self._metadata:
+            self._dirty = True
+            self._metadata[key] = value
+            self.metaDataChanged.emit(self)
+        else:
+            Logger.log("w", "Meta data with key %s was not found. Unable to change.", key)
+
+    def removeMetaDataEntry(self, key):
         if key in self._metadata:
             del self._metadata[key]
             self.metaDataChanged.emit(self)
@@ -205,14 +194,10 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     #   Note that if the property value is a function, this method will return the
     #   result of evaluating that property with the current stack. If you need the
     #   actual function, use getRawProperty()
-    def getProperty(self, key: str, property_name: str, context: Optional[PropertyEvaluationContext] = None) -> Any:
-        value = self.getRawProperty(key, property_name, context = context)
+    def getProperty(self, key: str, property_name: str):
+        value = self.getRawProperty(key, property_name)
         if isinstance(value, SettingFunction):
-            if context is not None:
-                context.pushContainer(self)
-            value = value(self, context)
-            if context is not None:
-                context.popContainer()
+            return value(self)
 
         return value
 
@@ -232,28 +217,18 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     #   \return The raw property value of the property, or None if not found. Note that
     #           the value might be a SettingFunction instance.
     #
-    def getRawProperty(self, key: str, property_name: str, *, context: Optional[PropertyEvaluationContext] = None,
-                       use_next: bool = True, skip_until_container: Optional[ContainerInterface] = None) -> Any:
-        containers = self._containers
-        if context is not None:
-            # if context is provided, check if there is any container that needs to be skipped.
-            start_index = context.context.get("evaluate_from_container_index", 0)
-            if start_index >= len(self._containers):
-                return None
-            containers = self._containers[start_index:]
-
-        for container in containers:
+    def getRawProperty(self, key, property_name, *, use_next = True, skip_until_container = None):
+        for container in self._containers:
             if skip_until_container and container.getId() != skip_until_container:
                 continue #Skip.
             skip_until_container = None #When we find the container, stop skipping.
 
-            value = container.getProperty(key, property_name, context)
+            value = container.getProperty(key, property_name)
             if value is not None:
                 return value
 
         if self._next_stack and use_next:
-            return self._next_stack.getRawProperty(key, property_name, context = context,
-                                                   use_next = use_next, skip_until_container = skip_until_container)
+            return self._next_stack.getRawProperty(key, property_name, use_next = use_next, skip_until_container = skip_until_container)
         else:
             return None
 
@@ -284,17 +259,16 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     #   Reimplemented from ContainerInterface
     #
     #   TODO: Expand documentation here, include the fact that this should _not_ include all containers
-    def serialize(self, ignored_metadata_keys: Optional[Set[str]] = None) -> str:
+    def serialize(self, ignored_metadata_keys: Optional[List] = None):
         parser = configparser.ConfigParser(interpolation = None, empty_lines_in_values = False)
 
         parser["general"] = {}
-        parser["general"]["version"] = str(self._metadata["version"])
-        parser["general"]["name"] = str(self.getName())
-        parser["general"]["id"] = str(self.getId())
+        parser["general"]["version"] = str(self.Version)
+        parser["general"]["name"] = str(self._name)
+        parser["general"]["id"] = str(self._id)
 
         if ignored_metadata_keys is None:
-            ignored_metadata_keys = set()
-        ignored_metadata_keys |= {"id", "name", "version", "container_type"}
+            ignored_metadata_keys = []
         parser["metadata"] = {}
         for key, value in self._metadata.items():
             # only serialize the data that's not in the ignore list
@@ -313,9 +287,8 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     #
     #   The profile upgrading code depends on information such as "configuration_type" and "version", which come from
     #   the serialized data. Due to legacy problem, those data may not be available if it comes from an ancient Cura.
-    @classmethod
-    def _readAndValidateSerialized(cls, serialized: str) -> configparser.ConfigParser:
-        parser = configparser.ConfigParser(interpolation = None, empty_lines_in_values=False)
+    def _readAndValidateSerialized(self, serialized: str) -> configparser.ConfigParser:
+        parser = configparser.ConfigParser(interpolation=None, empty_lines_in_values=False)
         parser.read_string(serialized)
 
         if "general" not in parser or any(pn not in parser["general"] for pn in ("version", "name", "id")):
@@ -323,30 +296,23 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
 
         return parser
 
-    @classmethod
-    def getConfigurationTypeFromSerialized(cls, serialized: str) -> Optional[str]:
+    def getConfigurationTypeFromSerialized(self, serialized: str) -> Optional[str]:
         configuration_type = None
         try:
-            parser = cls._readAndValidateSerialized(serialized)
-            configuration_type = parser["metadata"]["type"]
-        except InvalidContainerStackError as icse:
-            raise icse
+            parser = self._readAndValidateSerialized(serialized)
+            configuration_type = parser["metadata"].get("type")
         except Exception as e:
             Logger.log("e", "Could not get configuration type: %s", e)
         return configuration_type
 
-    @classmethod
-    def getVersionFromSerialized(cls, serialized: str) -> Optional[int]:
-        configuration_type = cls.getConfigurationTypeFromSerialized(serialized)
-        if not configuration_type:
-            Logger.log("d", "Could not get type from serialized.")
-            return None
-
-        # Get version
+    def getVersionFromSerialized(self, serialized: str) -> Optional[int]:
+        configuration_type = self.getConfigurationTypeFromSerialized(serialized)
+        # get version
         version = None
         try:
-            from UM.VersionUpgradeManager import VersionUpgradeManager
-            version = VersionUpgradeManager.getInstance().getFileVersion(configuration_type, serialized)
+            import UM.VersionUpgradeManager
+            version = UM.VersionUpgradeManager.VersionUpgradeManager.getInstance().getFileVersion(configuration_type,
+                                                                                                  serialized)
         except Exception as e:
             Logger.log("d", "Could not get version from serialized: %s", e)
         return version
@@ -356,13 +322,13 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     #   Reimplemented from ContainerInterface
     #
     #   TODO: Expand documentation here, include the fact that this should _not_ include all containers
-    def deserialize(self, serialized: str, file_name: Optional[str] = None) -> str:
-        # Update the serialized data first
-        serialized = super().deserialize(serialized, file_name)
+    def deserialize(self, serialized):
+        # update the serialized data first
+        serialized = super().deserialize(serialized)
         parser = self._readAndValidateSerialized(serialized)
 
-        if parser.getint("general", "version") != self.Version:
-            raise IncorrectVersionError()
+        if parser["general"].getint("version") != self.Version:
+            raise IncorrectVersionError
 
         # Clear all data before starting.
         for container in self._containers:
@@ -370,13 +336,11 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
 
         self._containers = []
         self._metadata = {}
+        self.setName(parser["general"].get("name"))
+        self._id = parser["general"].get("id")
 
         if "metadata" in parser:
             self._metadata = dict(parser["metadata"])
-        self._metadata["id"] = parser["general"]["id"]
-        self._metadata["name"] = parser["general"].get("name", self.getId())
-        self._metadata["version"] = self.Version  # Guaranteed to be equal to what's in the container. See above.
-        self._metadata["container_type"] = ContainerStack
 
         if "containers" in parser:
             for index, container_id in parser.items("containers"):
@@ -385,15 +349,12 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
                     containers[0].propertyChanged.connect(self._collectPropertyChanges)
                     self._containers.append(containers[0])
                 else:
-                    self._containers.append(_containerRegistry.getEmptyInstanceContainer())
-                    ConfigurationErrorMessage.getInstance().addFaultyContainers(container_id, self.getId())
-                    Logger.log("e", "When trying to deserialize %s, we received an unknown container ID (%s)" % (self.getId(), container_id))
-                    raise ContainerFormatError("When trying to deserialize %s, we received an unknown container ID (%s)" % (self.getId(), container_id))
+                    raise Exception("When trying to deserialize %s, we received an unknown ID (%s) for container" % (self._id, container_id))
 
         elif parser.has_option("general", "containers"):
             # Backward compatibility with 2.3.1: The containers used to be saved in a single comma-separated list.
             container_string = parser["general"].get("containers", "")
-            Logger.log("d", "While deserializing, we got the following container string: %s", container_string)
+            Logger.log("d", "While deserializeing, we got the following container string: %s", container_string)
             container_id_list = container_string.split(",")
             for container_id in container_id_list:
                 if container_id != "":
@@ -402,46 +363,9 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
                         containers[0].propertyChanged.connect(self._collectPropertyChanges)
                         self._containers.append(containers[0])
                     else:
-                        self._containers.append(_containerRegistry.getEmptyInstanceContainer())
-                        ConfigurationErrorMessage.getInstance().addFaultyContainers(container_id, self.getId())
-                        Logger.log("e", "When trying to deserialize %s, we received an unknown container ID (%s)" % (self.getId(), container_id))
-                        raise ContainerFormatError("When trying to deserialize %s, we received an unknown container ID (%s)" % (self.getId(), container_id))
+                        raise Exception("When trying to deserialize %s, we received an unknown ID (%s) for container" % (self._id, container_id))
 
         ## TODO; Deserialize the containers.
-
-        return serialized
-
-    ##  Gets the metadata of a container stack from a serialised format.
-    #
-    #   This parses the entire CFG document and only extracts the metadata from
-    #   it.
-    #
-    #   \param serialized A CFG document, serialised as a string.
-    #   \param container_id The ID of the container that we're getting the
-    #   metadata of, as obtained from the file name.
-    #   \return A dictionary of metadata that was in the CFG document as a
-    #   singleton list. If anything went wrong, this returns an empty list
-    #   instead.
-    @classmethod
-    def deserializeMetadata(cls, serialized: str, container_id: str) -> List[Dict[str, Any]]:
-        serialized = cls._updateSerialized(serialized)  # Update to most recent version.
-        parser = configparser.ConfigParser(interpolation = None)
-        parser.read_string(serialized)
-
-        metadata = {
-            "id": container_id,
-            "container_type": ContainerStack
-        }
-        try:
-            metadata["name"] = parser["general"]["name"]
-            metadata["version"] = parser["general"]["version"]
-        except KeyError as e:  # One of the keys or the General section itself is missing.
-            raise InvalidContainerStackError("Missing required fields: {error_msg}".format(error_msg = str(e)))
-
-        if "metadata" in parser:
-            metadata.update(parser["metadata"])
-
-        return [metadata]
 
     ##  Get all keys known to this container stack.
     #
@@ -450,7 +374,7 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     #
     #   \return A set of all setting keys in this container stack.
     def getAllKeys(self) -> Set[str]:
-        keys = set()  # type: Set[str]
+        keys = set()    # type: Set[str]
         definition_containers = [container for container in self.getContainers() if container.__class__ == DefinitionContainer] #To get all keys, get all definitions from all definition containers.
         for definition_container in cast(List[DefinitionContainer], definition_containers):
             keys |= definition_container.getAllKeys()
@@ -471,7 +395,7 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
 
     ##  Get a container by index.
     #
-    #   \param index The index of the container to get.
+    #   \param index \type{int} The index of the container to get.
     #
     #   \return The container at the specified index.
     #
@@ -512,11 +436,11 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     ##  \copydoc ContainerInterface::setPath
     #
     #   Reimplemented from ContainerInterface
-    def setPath(self, path: str) -> None:
+    def setPath(self, path: str):
         self._path = path
 
     ##  Get the SettingDefinition object for a specified key
-    def getSettingDefinition(self, key: str) -> Optional[SettingDefinition]:
+    def getSettingDefinition(self, key: str):
         for container in self._containers:
             if not isinstance(container, DefinitionContainer):
                 continue
@@ -532,14 +456,15 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
 
     ##  Find a container matching certain criteria.
     #
-    #   \param criteria A dictionary containing key and value pairs that need to
-    #   match the container. Note that the value of "*" can be used as a wild
-    #   card. This will ensure that any container that has the specified key in
-    #   the meta data is found.
-    #   \param container_type An optional type of container to filter on.
+    #   \param filter \type{dict} A dictionary containing key and value pairs
+    #   that need to match the container. Note that the value of "*" can be used
+    #   as a wild card. This will ensure that any container that has the
+    #   specified key in the meta data is found.
+    #   \param container_type \type{class} An optional type of container to
+    #   filter on.
     #   \return The first container that matches the filter criteria or None if not found.
     @UM.FlameProfiler.profile
-    def findContainer(self, criteria: Dict[str, Any] = None, container_type: type = None, **kwargs: Any) -> Optional[ContainerInterface]:
+    def findContainer(self, criteria = None, container_type = None, **kwargs) -> Optional[ContainerInterface]:
         if not criteria and kwargs:
             criteria = kwargs
         elif criteria is None:
@@ -569,22 +494,21 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     ##  Add a container to the top of the stack.
     #
     #   \param container The container to add to the stack.
-    def addContainer(self, container: ContainerInterface) -> None:
+    def addContainer(self, container):
         self.insertContainer(0, container)
 
     ##  Insert a container into the stack.
     #
-    #   \param index The index of to insert the container at.
+    #   \param index \type{int} The index of to insert the container at.
     #          A negative index counts from the bottom
     #   \param container The container to add to the stack.
-    def insertContainer(self, index: int, container: ContainerInterface) -> None:
+    def insertContainer(self, index, container):
         if container is self:
             raise Exception("Unable to add stack to itself.")
 
         container.propertyChanged.connect(self._collectPropertyChanges)
         self._containers.insert(index, container)
         self.containersChanged.emit(container)
-        self._dirty = True
 
     ##  Replace a container in the stack.
     #
@@ -594,7 +518,7 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     #
     #   \exception IndexError Raised when the specified index is out of bounds.
     #   \exception Exception when trying to replace container ContainerStack.
-    def replaceContainer(self, index: int, container: ContainerInterface, postpone_emit: bool = False) -> None:
+    def replaceContainer(self, index: int, container: ContainerInterface, postpone_emit=False):
         if index < 0:
             raise IndexError
         if container is self:
@@ -603,7 +527,6 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
         self._containers[index].propertyChanged.disconnect(self._collectPropertyChanges)
         container.propertyChanged.connect(self._collectPropertyChanges)
         self._containers[index] = container
-        self._dirty = True
         if postpone_emit:
             # send it using sendPostponedEmits
             self._postponed_emits.append((self.containersChanged, container))
@@ -615,12 +538,11 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     #   \param index \type{int} The index of the container to remove.
     #
     #   \exception IndexError Raised when the specified index is out of bounds.
-    def removeContainer(self, index: int = 0) -> None:
+    def removeContainer(self, index: int = 0):
         if index < 0:
             raise IndexError
         try:
             container = self._containers[index]
-            self._dirty = True
             container.propertyChanged.disconnect(self._collectPropertyChanges)
             del self._containers[index]
             self.containersChanged.emit(container)
@@ -641,7 +563,7 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     #   \param stack \type{ContainerStack} The next stack to set. Can be None.
     #   Raises Exception when trying to set itself as next stack (to prevent infinite loops)
     #   \sa getNextStack
-    def setNextStack(self, stack: "ContainerStack", connect_signals: bool = True) -> None:
+    def setNextStack(self, stack: "ContainerStack"):
         if self is stack:
             raise Exception("Next stack can not be itself")
         if self._next_stack == stack:
@@ -649,16 +571,14 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
 
         if self._next_stack:
             self._next_stack.propertyChanged.disconnect(self._collectPropertyChanges)
-            self.containersChanged.disconnect(self._next_stack.containersChanged)
         self._next_stack = stack
-        if self._next_stack and connect_signals:
+        if self._next_stack:
             self._next_stack.propertyChanged.connect(self._collectPropertyChanges)
-            self.containersChanged.connect(self._next_stack.containersChanged)
 
     ##  Send postponed emits
     #   These emits are collected from the option postpone_emit.
     #   Note: the option can be implemented for all functions modifying the stack.
-    def sendPostponedEmits(self) -> None:
+    def sendPostponedEmits(self):
         while self._postponed_emits:
             signal, signal_arg = self._postponed_emits.pop(0)
             signal.emit(signal_arg)
@@ -675,12 +595,12 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
                 # Setting is not validated. This can happen if there is only a setting definition.
                 # We do need to validate it, because a setting defintions value can be set by a function, which could
                 # be an invalid setting.
-                definition = cast(SettingDefinition, self.getSettingDefinition(key))
+                definition = self.getSettingDefinition(key)
                 validator_type = SettingDefinition.getValidatorForType(definition.type)
                 if validator_type:
                     validator = validator_type(key)
                     validation_state = validator(self)
-            if validation_state in (ValidatorState.Exception, ValidatorState.MaximumError, ValidatorState.MinimumError, ValidatorState.Invalid):
+            if validation_state in (ValidatorState.Exception, ValidatorState.MaximumError, ValidatorState.MinimumError):
                 return True
         return False
 
@@ -694,12 +614,12 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
                 # Setting is not validated. This can happen if there is only a setting definition.
                 # We do need to validate it, because a setting defintions value can be set by a function, which could
                 # be an invalid setting.
-                definition = cast(SettingDefinition, self.getSettingDefinition(key))
+                definition = self.getSettingDefinition(key)
                 validator_type = SettingDefinition.getValidatorForType(definition.type)
                 if validator_type:
                     validator = validator_type(key)
                     validation_state = validator(self)
-            if validation_state in (ValidatorState.Exception, ValidatorState.MaximumError, ValidatorState.MinimumError, ValidatorState.Invalid):
+            if validation_state in (ValidatorState.Exception, ValidatorState.MaximumError, ValidatorState.MinimumError):
                 error_keys.append(key)
         return error_keys
 
@@ -709,19 +629,18 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
     # loop can run. This prevents us from sending the same change signal multiple times.
     # In addition, it allows us to emit a single signal that reports all properties that
     # have changed.
-    def _collectPropertyChanges(self, key: str, property_name: str) -> None:
+    def _collectPropertyChanges(self, key: str, property_name: str):
         if key not in self._property_changes:
             self._property_changes[key] = set()
 
         self._property_changes[key].add(property_name)
 
         if not self._emit_property_changed_queued:
-            from UM.Application import Application
-            Application.getInstance().callLater(self._emitCollectedPropertyChanges)
+            _containerRegistry.getApplication().callLater(self._emitCollectedPropertyChanges)
             self._emit_property_changed_queued = True
 
     # Perform the emission of the change signals that were collected in a previous step.
-    def _emitCollectedPropertyChanges(self) -> None:
+    def _emitCollectedPropertyChanges(self):
         for key, property_names in self._property_changes.items():
             self.propertiesChanged.emit(key, property_names)
 
@@ -731,12 +650,7 @@ class ContainerStack(QObject, ContainerInterface, PluginObject):
         self._property_changes = {}
         self._emit_property_changed_queued = False
 
-    def __str__(self) -> str:
-        return "%s(%s)" % (type(self).__name__, self.getId())
-
-
-_containerRegistry = ContainerRegistryInterface()  # type: ContainerRegistryInterface
-
+_containerRegistry = None   # type:  ContainerRegistryInterface
 
 def setContainerRegistry(registry: ContainerRegistryInterface) -> None:
     global _containerRegistry

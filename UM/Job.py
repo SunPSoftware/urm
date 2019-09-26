@@ -1,11 +1,11 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 import time
-from typing import Any, Optional
+
+from UM.Signal import Signal, signalemitter
 
 from UM.JobQueue import JobQueue
-from UM.Signal import Signal, signalemitter
 
 
 ##  Base class for things that should be performed in a thread.
@@ -16,37 +16,28 @@ from UM.Signal import Signal, signalemitter
 #   \sa JobQueue
 @signalemitter
 class Job:
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
         self._running = False   # type: bool
         self._finished = False  # type: bool
-        self._result = None     # type: Any
-        self._message = ""      # type: str
-        self._error = None      # type: Optional[Exception]
+        self._result = None     # type: any
+        self._error = None
 
     ##  Perform the actual task of this job. Should be reimplemented by subclasses.
     #   \exception NotImplementedError
-    def run(self) -> None:
+    def run(self):
         raise NotImplementedError()
-
-    # Get optional message
-    def getMessage(self) -> str:
-        return self._message
-
-    # Set optional message
-    def setMessage(self, message: str) -> None:
-        self._message = message
 
     ##  Get the result of the job.
     #
     #   The actual result object returned by this method is dependant on the implementation.
-    def getResult(self) -> Any:
+    def getResult(self):
         return self._result
 
     ##  Set the result of this job.
     #
     #   This should be called by run() to set the actual result of the Job.
-    def setResult(self, result: Any) -> None:
+    def setResult(self, result: any):
         self._result = result
 
     ##  Set an exception that was thrown while the job was being executed.
@@ -55,7 +46,7 @@ class Job:
     #   to execute properly.
     #
     #   \param error \type{Exception} The exception to set.
-    def setError(self, error: Exception) -> None:
+    def setError(self, error: Exception):
         self._error = error
 
     ##  Start the job.
@@ -63,14 +54,14 @@ class Job:
     #   This will put the Job into the JobQueue to be processed whenever a thread is available.
     #
     #   \sa JobQueue::add()
-    def start(self) -> None:
+    def start(self):
         JobQueue.getInstance().add(self)
 
     ##  Cancel the job.
     #
     #   This will remove the Job from the JobQueue. If the run() function has already been called,
     #   this will do nothing.
-    def cancel(self) -> None:
+    def cancel(self):
         JobQueue.getInstance().remove(self)
 
     ##  Check whether the job is currently running.
@@ -94,7 +85,7 @@ class Job:
     ##  Get the error that was encountered during execution.
     #
     #   \return \type{Exception} The error encountered during execution or None if there was no error.
-    def getError(self) -> Optional[Exception]:
+    def getError(self) -> Exception:
         return self._error
 
     ##  Emitted when the job has finished processing.
@@ -114,5 +105,5 @@ class Job:
     #   forces a GIL release and allows a different thread to start processing
     #   if it is waiting.
     @staticmethod
-    def yieldThread() -> None:
+    def yieldThread():
         time.sleep(0)  # Sleeping for 0 introduces no delay but does allow context switching.

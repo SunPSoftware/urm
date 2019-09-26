@@ -1,5 +1,5 @@
 # Copyright (c) 2015 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from . import Operation
 from UM.Math.Matrix import Matrix
@@ -48,7 +48,15 @@ class SetTransformOperation(Operation.Operation):
         else:
             self._new_shear = node.getShear()
 
-        self._new_mirror = Vector(1, 1, 1)
+        if mirror:
+            self._new_mirror = mirror
+        else:
+            # Scale will either be negative or positive. If it's negative, we need to use the inverse mirror.
+            if self._node.getScale().x < 0:
+                self._new_mirror = Vector(-node.getMirror().x, -node.getMirror().y, -node.getMirror().z)
+            else:
+                self._new_mirror = node.getMirror()
+
         self._new_transformation = Matrix()
 
         euler_orientation = self._new_orientation.toMatrix().getEuler()
@@ -88,4 +96,4 @@ class SetTransformOperation(Operation.Operation):
     #
     #   A programmer-readable representation of this operation.
     def __repr__(self):
-        return "SetTransformOp.(node={0})".format(self._node)
+        return "SetTransformOperation(node = {0})".format(self._node)

@@ -1,5 +1,5 @@
 # Copyright (c) 2015 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 import copy
 
@@ -142,5 +142,5 @@ class ScaleOperation(Operation.Operation):
     #   \return A programmer-readable representation of this operation.
     def __repr__(self):
         mode = "set" if self._set_scale else "add" if self._add_scale else "relative"
-        return "ScaleOp.(node={0},scale={1},mode={2})".format(self._node, self._scale, mode)
+        return "ScaleOperation(node = {0}, scale={1}, mode={2})".format(self._node, self._scale, mode)
 

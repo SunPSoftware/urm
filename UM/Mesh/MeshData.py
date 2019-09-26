@@ -1,5 +1,5 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from UM.Math.Vector import Vector
 from UM.Math.AxisAlignedBox import AxisAlignedBox
@@ -8,13 +8,12 @@ from UM.Math import NumPyUtil
 from UM.Math.Matrix import Matrix
 
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import threading
 import numpy
 import numpy.linalg
 import scipy.spatial
-import scipy.spatial.qhull
 import hashlib
 from time import time
 numpy.seterr(all="ignore") # Ignore warnings (dev by zero)
@@ -44,8 +43,6 @@ Reuse = object()
 class MeshData:
     def __init__(self, vertices=None, normals=None, indices=None, colors=None, uvs=None, file_name=None,
                  center_position=None, zero_position=None, type = MeshType.faces, attributes=None):
-        self._application = None  # Initialize this later otherwise unit tests break
-
         self._vertices = NumPyUtil.immutableNDArray(vertices)
         self._normals = NumPyUtil.immutableNDArray(normals)
         self._indices = NumPyUtil.immutableNDArray(indices)
@@ -54,7 +51,7 @@ class MeshData:
         self._vertex_count = len(self._vertices) if self._vertices is not None else 0
         self._face_count = len(self._indices) if self._indices is not None else 0
         self._type = type
-        self._file_name = file_name  # type: Optional[str]
+        self._file_name = file_name  # type: str
         # original center position
         self._center_position = center_position
         # original zero position, is changed after transformation
@@ -76,14 +73,6 @@ class MeshData:
                     else:
                         new_value[attribute_key] = attribute_value
                 self._attributes[key] = new_value
-
-    ##  Triggered when this file is deleted.
-    #
-    #   The file will then no longer be watched for changes.
-    def __del__(self):
-        if self._file_name:
-            if self._application:
-                self._application.getController().getScene().removeWatchedFile(self._file_name)
 
     ## Create a new MeshData with specified changes
     #   \return \type{MeshData}
@@ -160,7 +149,7 @@ class MeshData:
     def hasUVCoordinates(self) -> bool:
         return self._uvs is not None
 
-    def getFileName(self) -> Optional[str]:
+    def getFileName(self) -> str:
         return self._file_name
 
     ##  Transform the meshdata, center and zero position by given Matrix
@@ -188,13 +177,13 @@ class MeshData:
         if self._vertices is None:
             return None
 
-        if matrix is not None:
-            data = self.getConvexHullTransformedVertices(matrix)
-        else:
-            data = self.getConvexHullVertices()
+        data = numpy.pad(self.getConvexHullVertices(), ((0, 0), (0, 1)), "constant", constant_values=(0.0, 1.0))
 
-        if data is None:
-            return None
+        if matrix is not None:
+            transposed = matrix.getTransposed().getData()
+            data = data.dot(transposed)
+            data += transposed[:, 3]
+            data = data[:, 0:3]
 
         min = data.min(axis=0)
         max = data.max(axis=0)
@@ -207,6 +196,7 @@ class MeshData:
     def getVerticesAsByteArray(self) -> Optional[bytes]:
         if self._vertices is None:
             return None
+        # FIXME cache result
         return self._vertices.tostring()
 
     ##  Get all normals of this mesh as a bytearray
@@ -215,6 +205,7 @@ class MeshData:
     def getNormalsAsByteArray(self) -> Optional[bytes]:
         if self._normals is None:
             return None
+        # FIXME cache result
         return self._normals.tostring()
 
     ##  Get all indices as a bytearray
@@ -223,16 +214,19 @@ class MeshData:
     def getIndicesAsByteArray(self) -> Optional[bytes]:
         if self._indices is None:
             return None
+        # FIXME cache result
         return self._indices.tostring()
 
     def getColorsAsByteArray(self) -> Optional[bytes]:
         if self._colors is None:
             return None
+        # FIXME cache result
         return self._colors.tostring()
 
     def getUVCoordinatesAsByteArray(self) -> Optional[bytes]:
         if self._uvs is None:
             return None
+        # FIXME cache result
         return self._uvs.tostring()
 
     #######################################################################
@@ -256,41 +250,21 @@ class MeshData:
     ##  Gets the convex hull points
     #
     #   \return \type{numpy.ndarray} the vertices which describe the convex hull
-    def getConvexHullVertices(self) -> Optional[numpy.ndarray]:
+    def getConvexHullVertices(self) -> numpy.ndarray:
         if self._convex_hull_vertices is None:
             convex_hull = self.getConvexHull()
-            if convex_hull is None:
-                return None
             self._convex_hull_vertices = numpy.take(convex_hull.points, convex_hull.vertices, axis=0)
         return self._convex_hull_vertices
 
     ##  Gets transformed convex hull points
     #
     #   \return \type{numpy.ndarray} the vertices which describe the convex hull
-    def getConvexHullTransformedVertices(self, transformation: Matrix) -> Optional[numpy.ndarray]:
+    def getConvexHullTransformedVertices(self, transformation: Matrix) -> numpy.ndarray:
         vertices = self.getConvexHullVertices()
         if vertices is not None:
             return transformVertices(vertices, transformation)
         else:
             return None
-
-    ##  Gets the plane the supplied face lies in. The resultant plane is specified by a point and a normal.
-    #
-    #   \param face_id \type{int} The index of the face (not the flattened indices).
-    #   \return \type{Tuple[numpy.ndarray, numpy.ndarray]} A plane, the 1st vector is the center, the 2nd the normal.
-    def getFacePlane(self, face_id: int) -> Tuple[numpy.ndarray, numpy.ndarray]:
-        if not self._indices or len(self._indices) == 0:
-            base_index = face_id * 3
-            v_a = self._vertices[base_index]
-            v_b = self._vertices[base_index + 1]
-            v_c = self._vertices[base_index + 2]
-        else:
-            v_a = self._vertices[self._indices[face_id][0]]
-            v_b = self._vertices[self._indices[face_id][1]]
-            v_c = self._vertices[self._indices[face_id][2]]
-        in_point = (v_a + v_b + v_c) / 3.0
-        face_normal = numpy.cross(v_b - v_a, v_c - v_a)
-        return in_point, face_normal
 
     def hasAttribute(self, key: str) -> bool:
         return key in self._attributes
@@ -386,11 +360,10 @@ def approximateConvexHull(vertex_data: numpy.ndarray, target_count: int) -> Opti
     start_time = time()
 
     input_max = target_count * 50   # Maximum number of vertices we want to feed to the convex hull algorithm.
-    unit_size = 0.0125             # Initial rounding interval. i.e. round to 0.125.
-    max_unit_size = 0.01
+    unit_size = 0.125               # Initial rounding interval. i.e. round to 0.125.
 
     # Round off vertices and extract the uniques until the number of vertices is below the input_max.
-    while len(vertex_data) > input_max and unit_size <= max_unit_size:
+    while len(vertex_data) > input_max:
         new_vertex_data = uniqueVertices(roundVertexArray(vertex_data, unit_size))
         # Check if there is variance in Z value, we need it for the convex hull calculation
         if numpy.amin(new_vertex_data[:, 1]) != numpy.amax(new_vertex_data[:, 1]):
@@ -405,28 +378,18 @@ def approximateConvexHull(vertex_data: numpy.ndarray, target_count: int) -> Opti
         return None
 
     # Take the convex hull and keep on rounding it off until the number of vertices is below the target_count.
-    hull_result = createConvexHull(vertex_data)
+    hull_result = scipy.spatial.ConvexHull(vertex_data)
     vertex_data = numpy.take(hull_result.points, hull_result.vertices, axis=0)
 
-    while len(vertex_data) > target_count and unit_size <= max_unit_size:
+    while len(vertex_data) > target_count:
         vertex_data = uniqueVertices(roundVertexArray(vertex_data, unit_size))
-        hull_result = createConvexHull(vertex_data)
+        hull_result = scipy.spatial.ConvexHull(vertex_data)
         vertex_data = numpy.take(hull_result.points, hull_result.vertices, axis=0)
         unit_size *= 2
 
     end_time = time()
     Logger.log("d", "approximateConvexHull(target_count=%s) Calculating 3D convex hull took %s seconds. %s input vertices. %s output vertices.",
                target_count, end_time - start_time, len(vertex_data), len(hull_result.vertices))
-    return hull_result
-
-
-def createConvexHull(vertex_data: numpy.ndarray) -> scipy.spatial.ConvexHull:
-    try:
-        hull_result = scipy.spatial.ConvexHull(vertex_data)
-    except scipy.spatial.qhull.QhullError:
-        # Can get an error when the model is lower dimensional, use "QJ" is make it full dimensional
-        Logger.log("w", "Loaded model is low-dimensional, apply QJ to make it full dimensional")
-        hull_result = scipy.spatial.ConvexHull(vertex_data, qhull_options="QJ")
     return hull_result
 
 

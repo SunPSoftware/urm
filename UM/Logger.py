@@ -1,7 +1,7 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2016 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
-import threading
+import sys
 import traceback
 import inspect
 from typing import List
@@ -43,10 +43,7 @@ class Logger:
     #   \param **kwargs \type{dict} List of placeholder replacements that will be passed to str.format().
     @classmethod
     def log(cls, log_type: str, message: str, *args, **kwargs):
-        current_frame = inspect.currentframe()
-        if current_frame is None:   # Avoid crash if the inspect module returns None (it should never happen)
-            return
-        caller_frame = current_frame.f_back
+        caller_frame = inspect.currentframe().f_back
         frame_info = inspect.getframeinfo(caller_frame)
         try:
             if args or kwargs: # Only format the message if there are args
@@ -57,12 +54,7 @@ class Logger:
 
                 message = new_message
 
-            current_thread = threading.current_thread()
-            message = "[{thread}] {class_name}.{function} [{line}]: {message}".format(thread = current_thread.name,
-                                                                                      class_name = caller_frame.f_globals["__name__"],
-                                                                                      function = frame_info.function,
-                                                                                      line = frame_info.lineno,
-                                                                                      message = message)
+            message = "{class_name}.{function} [{line}]: {message}".format(class_name = caller_frame.f_globals["__name__"], function = frame_info.function, line = frame_info.lineno, message = message)
 
             for logger in cls.__loggers:
                 logger.log(log_type, message)

@@ -1,36 +1,34 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2017 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
+import threading
 import argparse
 import os
 import sys
-import threading
 
 from UM.Controller import Controller
-from UM.Message import Message #For typing.
-from UM.PackageManager import PackageManager
 from UM.PluginRegistry import PluginRegistry
+from UM.Mesh.MeshFileHandler import MeshFileHandler
 from UM.Resources import Resources
 from UM.Operations.OperationStack import OperationStack
 from UM.Event import CallFunctionEvent
-import UM.Settings
+from UM.Settings.ContainerRegistry import ContainerRegistry
 import UM.Settings.ContainerStack
 import UM.Settings.InstanceContainer
-from UM.Settings.ContainerRegistry import ContainerRegistry
-from UM.Signal import Signal, signalemitter
+from UM.Signal import Signal, signalemitter, SignalQueue
 from UM.Logger import Logger
 from UM.Preferences import Preferences
-from UM.View.Renderer import Renderer #For typing.
 from UM.OutputDevice.OutputDeviceManager import OutputDeviceManager
 from UM.i18n import i18nCatalog
-from UM.Version import Version
+from UM.Workspace.WorkspaceFileHandler import WorkspaceFileHandler
+
+import UM.Settings
 
 from typing import TYPE_CHECKING, List, Callable, Any, Optional
 if TYPE_CHECKING:
-    from UM.Backend.Backend import Backend
     from UM.Settings.ContainerStack import ContainerStack
+    from UM.Backend import Backend
     from UM.Extension import Extension
-
 
 ##  Central object responsible for running the main event loop and creating other central objects.
 #
@@ -43,139 +41,73 @@ class Application:
     #
     #   \param name \type{string} The name of the application.
     #   \param version \type{string} Version, formatted as major.minor.rev
-    #   \param build_type Additional version info on the type of build this is, such as "master".
-    #   \param is_debug_mode Whether to run in debug mode.
-    def __init__(self, name: str, version: str, api_version: str, app_display_name: str = "", build_type: str = "", is_debug_mode: bool = False, **kwargs) -> None:
-        if Application.__instance is not None:
-            raise RuntimeError("Try to create singleton '%s' more than once" % self.__class__.__name__)
-        Application.__instance = self
+    def __init__(self, name: str, version: str, build_type: str = "", **kwargs):
+        if Application._instance != None:
+            raise ValueError("Duplicate singleton creation")
 
-        super().__init__()  # Call super to make multiple inheritance work.
+        # If the constructor is called and there is no instance, set the instance to self.
+        # This is done because we can't make constructor private
+        Application._instance = self
 
-        self._api_version = Version(api_version)  # type: Version
+        self._application_name = name
+        self._version = version
+        self._build_type = build_type
 
-        self._app_name = name  # type: str
-        self._app_display_name = app_display_name if app_display_name else name  # type: str
-        self._version = version  # type: str
-        self._build_type = build_type  # type: str
-        self._is_debug_mode = is_debug_mode  # type: bool
-        self._is_headless = False  # type: bool
-        self._use_external_backend = False  # type: bool
+        os.putenv("UBUNTU_MENUPROXY", "0")  # For Ubuntu Unity this makes Qt use its own menu bar rather than pass it on to Unity.
 
-        self._just_updated_from_old_version = False  # type: bool
-
-        self._config_lock_filename = "{name}.lock".format(name = self._app_name)  # type: str
-
-        self._cli_args = None  # type: argparse.Namespace
-        self._cli_parser = argparse.ArgumentParser(prog = self._app_name, add_help = False)  # type: argparse.ArgumentParser
-
-        self._main_thread = threading.current_thread()  # type: threading.Thread
-
-        self.default_theme = self._app_name  # type: str # Default theme is the application name
-        self._default_language = "en_US"  # type: str
-
-        self.change_log_url = "https://github.com/Ultimaker/Uranium"  # Where to find a more detailed description of the recent updates.
-
-        self._preferences_filename = None  # type: str
-        self._preferences = None  # type: Preferences
-
-        self._extensions = []  # type: List[Extension]
-        self._required_plugins = []  # type: List[str]
-
-        self._package_manager_class = PackageManager  # type: type
-        self._package_manager = None  # type: PackageManager
-
-        self._plugin_registry = None  # type: PluginRegistry
-        self._container_registry_class = ContainerRegistry  # type: type
-        self._container_registry = None  # type: ContainerRegistry
-        self._global_container_stack = None  # type: ContainerStack
-
-        self._controller = None  # type: Controller
-        self._backend = None  # type: Backend
-        self._output_device_manager = None  # type: OutputDeviceManager
-        self._operation_stack = None  # type: OperationStack
-
-        self._visible_messages = []  # type: List[Message]
-        self._message_lock = threading.Lock()  # type: threading.Lock
-
-        self._app_install_dir = self.getInstallPrefix()  # type: str
-
-    def getAPIVersion(self) -> "Version":
-        return self._api_version
-
-    # Adds the command line options that can be parsed by the command line parser.
-    # Can be overridden to add additional command line options to the parser.
-    def addCommandLineOptions(self) -> None:
-        self._cli_parser.add_argument("--version",
-                                      action = "version",
-                                      version = "%(prog)s version: {0}".format(self._version))
-        self._cli_parser.add_argument("--external-backend",
-                                      action = "store_true",
-                                      default = False,
-                                      help = "Use an externally started backend instead of starting it automatically. This is a debug feature to make it possible to run the engine with debug options enabled.")
-        self._cli_parser.add_argument('--headless',
-                                      action = 'store_true',
-                                      default = False,
-                                      help = "Hides all GUI elements.")
-        self._cli_parser.add_argument("--debug",
-                                      action = "store_true",
-                                      default = False,
-                                      help = "Turn on the debug mode by setting this option.")
-
-    def parseCliOptions(self) -> None:
-        self._cli_args = self._cli_parser.parse_args()
-
-        self._is_headless = self._cli_args.headless
-        self._is_debug_mode = self._cli_args.debug or self._is_debug_mode
-        self._use_external_backend = self._cli_args.external_backend
-
-    # Performs initialization that must be done before start.
-    def initialize(self) -> None:
-        # For Ubuntu Unity this makes Qt use its own menu bar rather than pass it on to Unity.
-        os.putenv("UBUNTU_MENUPROXY", "0")
-
-        # Custom signal handling
         Signal._app = self
         Signal._signalQueue = self
-
-        # Initialize Resources. Set the application name and version here because we can only know the actual info
-        # after the __init__() has been called.
-        Resources.ApplicationIdentifier = self._app_name
-        Resources.ApplicationVersion = self._version
+        Resources.ApplicationIdentifier = name
+        Resources.ApplicationVersion = version
 
         Resources.addSearchPath(os.path.join(os.path.dirname(sys.executable), "resources"))
-        Resources.addSearchPath(os.path.join(self._app_install_dir, "share", "uranium", "resources"))
-        Resources.addSearchPath(os.path.join(self._app_install_dir, "Resources", "uranium", "resources"))
-        Resources.addSearchPath(os.path.join(self._app_install_dir, "Resources", self._app_name, "resources"))
+        Resources.addSearchPath(os.path.join(Application.getInstallPrefix(), "share", "uranium", "resources"))
+        Resources.addSearchPath(os.path.join(Application.getInstallPrefix(), "Resources", "uranium", "resources"))
+        Resources.addSearchPath(os.path.join(Application.getInstallPrefix(), "Resources", self.getApplicationName(), "resources"))
 
-        if not hasattr(sys, "frozen"):
-            Resources.addSearchPath(os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "resources"))
+#Fixme:CuraApplication will add the path again, so comment this
+#        if not hasattr(sys, "frozen"):
+#            Resources.addSearchPath(os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "resources"))
 
+        self._main_thread = threading.current_thread()
+
+        super().__init__()  # Call super to make multiple inheritance work.
         i18nCatalog.setApplication(self)
+
+        self._renderer = None
 
         PluginRegistry.addType("backend", self.setBackend)
         PluginRegistry.addType("logger", Logger.addLogger)
         PluginRegistry.addType("extension", self.addExtension)
 
-        self._preferences = Preferences()
-        self._preferences.addPreference("general/language", self._default_language)
-        self._preferences.addPreference("general/visible_settings", "")
-        self._preferences.addPreference("general/plugins_to_remove", "")
-        self._preferences.addPreference("general/disabled_plugins", "")
+        preferences = Preferences.getInstance()
+        preferences.addPreference("general/language", "en")
+        preferences.addPreference("general/visible_settings", "")
+
+        try:
+            preferences.readFromFile(Resources.getPath(Resources.Preferences, self._application_name + ".cfg"))
+        except FileNotFoundError:
+            pass
 
         self._controller = Controller(self)
+        self._mesh_file_handler = MeshFileHandler.getInstance()
+        self._mesh_file_handler.setApplication(self)
+        self._workspace_file_handler = WorkspaceFileHandler.getInstance()
+        self._workspace_file_handler.setApplication(self)
+        self._extensions = []
+        self._backend = None
         self._output_device_manager = OutputDeviceManager()
 
-        self._operation_stack = OperationStack(self._controller)
+        self._required_plugins = []
 
-        self._plugin_registry = PluginRegistry(self)
+        self._operation_stack = OperationStack(self.getController())
 
-        self._plugin_registry.addPluginLocation(os.path.join(self._app_install_dir, "lib", "uranium"))
-        self._plugin_registry.addPluginLocation(os.path.join(self._app_install_dir, "lib64", "uranium"))
-        self._plugin_registry.addPluginLocation(os.path.join(self._app_install_dir, "lib32", "uranium"))
+        self._plugin_registry = PluginRegistry.getInstance()
+
+        self._plugin_registry.addPluginLocation(os.path.join(Application.getInstallPrefix(), "lib", "uranium"))
         self._plugin_registry.addPluginLocation(os.path.join(os.path.dirname(sys.executable), "plugins"))
-        self._plugin_registry.addPluginLocation(os.path.join(self._app_install_dir, "Resources", "uranium", "plugins"))
-        self._plugin_registry.addPluginLocation(os.path.join(self._app_install_dir, "Resources", self._app_name, "plugins"))
+        self._plugin_registry.addPluginLocation(os.path.join(Application.getInstallPrefix(), "Resources", "uranium", "plugins"))
+        self._plugin_registry.addPluginLocation(os.path.join(Application.getInstallPrefix(), "Resources", self.getApplicationName(), "plugins"))
         # Locally installed plugins
         local_path = os.path.join(Resources.getStoragePath(Resources.Resources), "plugins")
         # Ensure the local plugins directory exists
@@ -185,44 +117,28 @@ class Application:
             pass
         self._plugin_registry.addPluginLocation(local_path)
 
-        if not hasattr(sys, "frozen"):
-            self._plugin_registry.addPluginLocation(os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "plugins"))
+# Fixme:CuraApplication will add the path again, so comment this
+#        if not hasattr(sys, "frozen"):
+#            self._plugin_registry.addPluginLocation(os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "plugins"))
 
-        self._container_registry = self._container_registry_class(self)
+        self._plugin_registry.setApplication(self)
 
-        UM.Settings.InstanceContainer.setContainerRegistry(self._container_registry)
-        UM.Settings.ContainerStack.setContainerRegistry(self._container_registry)
+        ContainerRegistry.setApplication(self)
+        UM.Settings.InstanceContainer.setContainerRegistry(self.getContainerRegistry())
+        UM.Settings.ContainerStack.setContainerRegistry(self.getContainerRegistry())
 
+        self._parsed_command_line = None
+        self.parseCommandLine()
+
+        self._visible_messages = []
+        self._message_lock = threading.Lock()
         self.showMessageSignal.connect(self.showMessage)
         self.hideMessageSignal.connect(self.hideMessage)
 
-    def startSplashWindowPhase(self) -> None:
-        pass
-
-    def startPostSplashWindowPhase(self) -> None:
-        pass
-
-    # Indicates if we have just updated from an older application version.
-    def hasJustUpdatedFromOldVersion(self) -> bool:
-        return self._just_updated_from_old_version
-
-    ##  Run the main event loop.
-    #   This method should be re-implemented by subclasses to start the main event loop.
-    #   \exception NotImplementedError
-    def run(self):
-        self.addCommandLineOptions()
-        self.parseCliOptions()
-        self.initialize()
-
-        self.startSplashWindowPhase()
-        self.startPostSplashWindowPhase()
+        self._global_container_stack = None
 
     def getContainerRegistry(self):
-        return self._container_registry
-
-    ##  Get the lock filename
-    def getApplicationLockFilename(self) -> str:
-        return self._config_lock_filename
+        return ContainerRegistry.getInstance()
 
     ##  Emitted when the application window was closed and we need to shut down the application
     applicationShuttingDown = Signal()
@@ -233,46 +149,38 @@ class Application:
 
     globalContainerStackChanged = Signal()
 
-    workspaceLoaded = Signal()
-
-    def setGlobalContainerStack(self, stack: "ContainerStack") -> None:
-        if self._global_container_stack != stack:
-            self._global_container_stack = stack
-            self.globalContainerStackChanged.emit()
+    def setGlobalContainerStack(self, stack: "ContainerStack"):
+        self._global_container_stack = stack
+        self.globalContainerStackChanged.emit()
 
     def getGlobalContainerStack(self) -> Optional["ContainerStack"]:
         return self._global_container_stack
 
-    def hideMessage(self, message: Message) -> None:
+    def hideMessage(self, message):
         raise NotImplementedError
 
-    def showMessage(self, message: Message) -> None:
-        raise NotImplementedError
-
-    def showToastMessage(self, title: str, message: str) -> None:
+    def showMessage(self, message):
         raise NotImplementedError
 
     ##  Get the version of the application
+    #   \returns version \type{string}
     def getVersion(self) -> str:
         return self._version
 
-    ##  Get the build type of the application
+    @classmethod
+    def getStaticVersion(cls):
+        return "unknown"
+
+    ##  Get the buildtype of the application
+    #   \returns version \type{string}
     def getBuildType(self) -> str:
         return self._build_type
-
-    def getIsDebugMode(self) -> bool:
-        return self._is_debug_mode
-
-    def getIsHeadLess(self) -> bool:
-        return self._is_headless
-
-    def getUseExternalBackend(self) -> bool:
-        return self._use_external_backend
 
     visibleMessageAdded = Signal()
 
     ##  Hide message by ID (as provided by built-in id function)
-    def hideMessageById(self, message_id: int) -> None:
+    #   \param message_id \type{long}
+    def hideMessageById(self, message_id):
         # If a user and the application tries to close same message dialog simultaneously, message_id could become an empty
         # string, and then the application will raise an error when trying to do "int(message_id)".
         # So we check the message_id here.
@@ -290,59 +198,56 @@ class Application:
     visibleMessageRemoved = Signal()
 
     ##  Get list of all visible messages
-    def getVisibleMessages(self) -> List[Message]:
+    #   \returns visible_messages \type{list}
+    def getVisibleMessages(self):
         with self._message_lock:
             return self._visible_messages
 
-    ##  Function that needs to be overridden by child classes with a list of plugins it needs.
-    def _loadPlugins(self) -> None:
+    ##  Function that needs to be overridden by child classes with a list of plugin it needs.
+    def _loadPlugins(self):
         pass
 
+    def getCommandLineOption(self, name, default = None):
+        if not self._parsed_command_line:
+            self.parseCommandLine()
+            Logger.log("d", "Command line options: %s", str(self._parsed_command_line))
+
+        return self._parsed_command_line.get(name, default)
+
     ##  Get name of the application.
-    #   \returns app_name \type{string}
+    #   \returns application_name \type{string}
     def getApplicationName(self) -> str:
-        return self._app_name
+        return self._application_name
 
-    def getApplicationDisplayName(self) -> str:
-        return self._app_display_name
+    def getApplicationLanguage(self):
+        override_lang = os.getenv("URANIUM_LANGUAGE")
+        if override_lang:
+            return override_lang
 
-    ##  Get the preferences.
-    #   \return preferences \type{Preferences}
-    def getPreferences(self) -> Preferences:
-        return self._preferences
+        preflang = Preferences.getInstance().getValue("general/language")
+        if preflang:
+            return preflang
 
-    def savePreferences(self) -> None:
-        if self._preferences_filename:
-            self._preferences.writeToFile(self._preferences_filename)
-        else:
-            Logger.log("i", "Preferences filename not set. Unable to save file.")
+        env_lang = os.getenv("LANGUAGE")
+        if env_lang:
+            return env_lang
 
-    ##  Get the currently used IETF language tag.
-    #   The returned tag is during runtime used to translate strings.
-    #   \returns Language tag.
-    def getApplicationLanguage(self) -> str:
-        language = os.getenv("URANIUM_LANGUAGE")
-        if not language:
-            language = self._preferences.getValue("general/language")
-        if not language:
-            language = os.getenv("LANGUAGE")
-        if not language:
-            language = self._default_language
-
-        return language
+        return "en"
 
     ##  Application has a list of plugins that it *must* have. If it does not have these, it cannot function.
     #   These plugins can not be disabled in any way.
-    def getRequiredPlugins(self) -> List[str]:
+    #   \returns required_plugins \type{list}
+    def getRequiredPlugins(self):
         return self._required_plugins
 
     ##  Set the plugins that the application *must* have in order to function.
     #   \param plugin_names \type{list} List of strings with the names of the required plugins
-    def setRequiredPlugins(self, plugin_names: List[str]) -> None:
+    def setRequiredPlugins(self, plugin_names: List[str]):
         self._required_plugins = plugin_names
 
     ##  Set the backend of the application (the program that does the heavy lifting).
-    def setBackend(self, backend: "Backend") -> None:
+    #   \param backend \type{Backend}
+    def setBackend(self, backend: "Backend"):
         self._backend = backend
 
     ##  Get the backend of the application (the program that does the heavy lifting).
@@ -360,54 +265,89 @@ class Application:
     def getController(self) -> Controller:
         return self._controller
 
+    ##  Get the MeshFileHandler of this application.
+    #   \returns MeshFileHandler \type{MeshFileHandler}
+    def getMeshFileHandler(self) -> MeshFileHandler:
+        return self._mesh_file_handler
+
+    def getWorkspaceFileHandler(self) -> WorkspaceFileHandler:
+        return self._workspace_file_handler
+
     def getOperationStack(self) -> OperationStack:
         return self._operation_stack
 
     def getOutputDeviceManager(self) -> OutputDeviceManager:
         return self._output_device_manager
 
+    ##  Run the main event loop.
+    #   This method should be re-implemented by subclasses to start the main event loop.
+    #   \exception NotImplementedError
+    def run(self):
+        raise NotImplementedError("Run must be implemented by application")
+
     ##  Return an application-specific Renderer object.
     #   \exception NotImplementedError
-    def getRenderer(self) -> Renderer:
+    def getRenderer(self):
         raise NotImplementedError("getRenderer must be implemented by subclasses.")
 
     ##  Post a function event onto the event loop.
     #
     #   This takes a CallFunctionEvent object and puts it into the actual event loop.
     #   \exception NotImplementedError
-    def functionEvent(self, event: CallFunctionEvent) -> None:
+    def functionEvent(self, event):
         raise NotImplementedError("functionEvent must be implemented by subclasses.")
 
     ##  Call a function the next time the event loop runs.
     #
-    #   You can't get the result of this function directly. It won't block.
     #   \param function The function to call.
     #   \param args The positional arguments to pass to the function.
     #   \param kwargs The keyword arguments to pass to the function.
-    def callLater(self, func: Callable[..., Any], *args, **kwargs) -> None:
+    def callLater(self, func: Callable[[Any], Any], *args, **kwargs):
         event = CallFunctionEvent(func, args, kwargs)
         self.functionEvent(event)
 
-    ##  Get the application's main thread.
-    def getMainThread(self) -> threading.Thread:
+    ##  Get the application"s main thread.
+    def getMainThread(self):
         return self._main_thread
 
-    def addExtension(self, extension: "Extension") -> None:
+    ##  Return the singleton instance of the application object
+    @classmethod
+    def getInstance(cls) -> "Application":
+        # Note: Explicit use of class name to prevent issues with inheritance.
+        if not Application._instance:
+            Application._instance = cls()
+
+        return Application._instance
+
+    def parseCommandLine(self):
+        parser = argparse.ArgumentParser(prog = self.getApplicationName()) #pylint: disable=bad-whitespace
+        self.addCommandLineOptions(parser)
+
+        self._parsed_command_line = vars(parser.parse_args())
+
+    ##  Can be overridden to add additional command line options to the parser.
+    #
+    #   \param parser \type{argparse.ArgumentParser} The parser that will parse the command line.
+    @classmethod
+    def addCommandLineOptions(cls, parser):
+        parser.add_argument("--version", action="version", version="%(prog)s {0}".format(cls.getStaticVersion()))
+        parser.add_argument("--external-backend",
+                            dest="external-backend",
+                            action="store_true", default=False,
+                            help="Use an externally started backend instead of starting it automatically. This is a debug feature to make it possible to run the engine with debug options enabled.")
+
+    def addExtension(self, extension: "Extension"):
         self._extensions.append(extension)
 
     def getExtensions(self) -> List["Extension"]:
         return self._extensions
 
     @staticmethod
-    def getInstallPrefix() -> str:
+    def getInstallPrefix():
         if "python" in os.path.basename(sys.executable):
-            executable = sys.argv[0]
+            return os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), ".."))
         else:
-            executable = sys.executable
-        return os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(executable)), ".."))
+            return os.path.abspath(os.path.join(os.path.dirname(sys.executable), ".."))
 
-    __instance = None   # type: Application
+    _instance = None    # type: Application
 
-    @classmethod
-    def getInstance(cls, *args, **kwargs) -> "Application":
-        return cls.__instance

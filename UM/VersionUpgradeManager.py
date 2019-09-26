@@ -1,23 +1,22 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2016 Ultimaker B.V.
+# Cura is released under the terms of the AGPLv3 or higher.
 
 import collections  # For deque, for breadth-first search and to track tasks, and namedtuple.
 import os  # To get the configuration file names and to rename files.
-import re
 import traceback
-from typing import Any, Dict, Callable, Iterator, List, Optional, Set, Tuple
 
-import UM.Message  # To show the "upgrade succeeded" message.
-import UM.MimeTypeDatabase  # To know how to save the resulting files.
-import UM.i18n  # To translate the "upgrade succeeded" message.
 from UM.Application import Application
 from UM.Logger import Logger
-from UM.MimeTypeDatabase import MimeType
-from UM.PluginObject import PluginObject
 from UM.PluginRegistry import PluginRegistry  # To find plug-ins.
 from UM.Resources import Resources  # To load old versions from.
+import UM.i18n  # To translate the "upgrade succeeded" message.
+import UM.Message  # To show the "upgrade succeeded" message.
+import UM.MimeTypeDatabase  # To know how to save the resulting files.
+import tempfile
+import shutil
 
 catalogue = UM.i18n.i18nCatalog("uranium")
+
 
 ##  File that needs upgrading, with all the required info to upgrade it.
 #
@@ -32,7 +31,6 @@ UpgradeTask = collections.namedtuple("UpgradeTask", ["storage_path", "file_name"
 FilesDataUpdateResult = collections.namedtuple("FilesDataUpdateResult",
                                                ["configuration_type", "version", "files_data",
                                                 "file_names_without_extension"])
-
 
 ##  Regulates the upgrading of configuration from one application version to the
 #   next.
@@ -53,61 +51,30 @@ FilesDataUpdateResult = collections.namedtuple("FilesDataUpdateResult",
 #   to the current (upgraded) versions, where they are never loaded again unless
 #   the user manually retrieves the files.
 class VersionUpgradeManager:
+    ##  The singleton instance of this class.
+    __instance = None   # type: VersionUpgradeManager
+
+    ##  Gets the instance of the VersionUpgradeManager, or creates one.
+    @classmethod
+    def getInstance(cls) -> "VersionUpgradeManager":
+        if not cls.__instance:
+            cls.__instance = VersionUpgradeManager()
+        return cls.__instance
 
     ##  Initialises the version upgrade manager.
     #
     #   This initialises the cache for shortest upgrade routes, and registers
     #   the version upgrade plug-ins.
-    def __init__(self, application: Application) -> None:
-        if VersionUpgradeManager.__instance is not None:
-            raise RuntimeError("Try to create singleton '%s' more than once" % self.__class__.__name__)
-        VersionUpgradeManager.__instance = self
+    def __init__(self):
+        self._version_upgrades = {} #For each config type and each version, gives a set of upgrade plug-ins that can convert them to something else.
+        self._get_version_functions = {} #For each config type, gives a function with which to get the version number from those files.
+        self._storage_paths = {} #For each config type, a set of storage paths to search for old config files.
+        self._current_versions = {} #To know which preference versions and types to upgrade to.
+        self._upgrade_tasks = collections.deque() #The files that we still have to upgrade.
+        self._upgrade_routes = {} #How to upgrade from one version to another. Needs to be pre-computed after all version upgrade plug-ins are registered.
 
-        super().__init__()
-
-        self._application = application
-        self._version_upgrades = {} # type: Dict[Tuple[str, int], Set[Tuple[str, int, Callable[[str, str], Optional[Tuple[List[str], List[str]]]]]]]   # For each config type and each version, gives a set of upgrade plug-ins that can convert them to something else.
-
-        # For each config type, gives a function with which to get the version number from those files.
-        self._get_version_functions = {}  # type: Dict[str, Callable[[str], int]]
-
-        # For each config type, a set of storage paths to search for old config files.
-        self._storage_paths = {}  # type: Dict[str, Dict[int, Set[str]]]
-
-        # To know which preference versions and types to upgrade to.
-        self._current_versions = {} # type: Dict[Tuple[str, int], Any]
-
-        self._upgrade_tasks = collections.deque()  # type: collections.deque  # The files that we still have to upgrade.
-        self._upgrade_routes = {}  # type: Dict[Tuple[str, int], Tuple[str, int, Callable[[str, str], Optional[Tuple[List[str], List[str]]]]]] #How to upgrade from one version to another. Needs to be pre-computed after all version upgrade plug-ins are registered.
-
-        self._registry = PluginRegistry.getInstance()   # type: PluginRegistry
+        self._registry = PluginRegistry.getInstance()
         PluginRegistry.addType("version_upgrade", self._addVersionUpgrade)
-
-        #Regular expressions of the files that should not be checked, such as log files.
-        self._ignored_files = [
-            ".*\.lock",       # Don't upgrade the configuration file lock. It's not persistent.
-            "plugins\.json",  # plugins.json and packages.json need to remain the same for the version upgrade plug-ins.
-            "packages\.json",
-            ".*\.log",        # Don't process the log. It's not needed and it could be really big.
-            "3.[0-3]\\.*",    # Don't upgrade folders that are back-ups from older version upgrades. Until v3.3 we stored the back-up in the config folder itself.
-            "3.[0-3]/.*",
-            "2.[0-7]\\.*",
-            "2.[0-7]/.*",
-            "cura\\.*",
-            "cura/.*",
-            "plugins\\.*",    # Don't upgrade manually installed plug-ins.
-            "plugins/.*",
-            "./*packages\.json",
-            "./*plugins\.json"
-        ]  # type: List[str]
-
-    ##  Registers a file to be ignored by version upgrade checks (eg log files).
-    #   \param file_name The base file name of the file to be ignored.
-
-    def registerIgnoredFile(self, file_name: str) -> None:
-        # Convert the file name to a regular expresion to add to the ignored files
-        file_name_regex = re.escape(file_name)
-        self._ignored_files.append(file_name_regex)
 
     ##  Gets the paths where a specified type of file should be stored.
     #
@@ -117,7 +84,7 @@ class VersionUpgradeManager:
     #
     #   \param configuration_type The type of configuration to be stored.
     #   \return A set of storage paths for the specified configuration type.
-    def getStoragePaths(self, configuration_type: str) -> Dict[int, Set[str]]:
+    def getStoragePaths(self, configuration_type):
         return self._storage_paths[configuration_type]
 
     ##  Changes the target versions to upgrade to.
@@ -125,10 +92,10 @@ class VersionUpgradeManager:
     #   \param current_versions A dictionary of tuples of configuration types
     #   and their versions currently in use, and with each of these a tuple of
     #   where to store this type of file and its MIME type.
-    def setCurrentVersions(self, current_versions: Dict[Tuple[str, int], Any]) -> None:
+    def setCurrentVersions(self, current_versions):
         self._current_versions = current_versions
 
-    def registerCurrentVersion(self, version_info: Tuple[str, int], type_info: Any) -> None:
+    def registerCurrentVersion(self, version_info, type_info):
         if version_info in self._current_versions:
             Logger.log("d", "Overwriting current version info: %s", repr(version_info))
         self._current_versions[version_info] = type_info
@@ -141,18 +108,18 @@ class VersionUpgradeManager:
     #
     #   \return True if anything was upgraded, or False if it was already up to
     #   date.
-    def upgrade(self) -> bool:
+    def upgrade(self):
         Logger.log("i", "Looking for old configuration files to upgrade.")
-        self._upgrade_tasks.extend(self._getUpgradeTasks())     # Get the initial files to upgrade.
-        self._upgrade_routes = self._findShortestUpgradeRoutes()  # Pre-compute the upgrade routes.
+        self._upgrade_tasks.extend(self._getUpgradeTasks())     #Get the initial files to upgrade.
+        self._upgrade_routes = self._findShortestUpgradeRoutes() #Pre-compute the upgrade routes.
 
-        upgraded = False  # Did we upgrade something?
+        upgraded = False #Did we upgrade something?
         while self._upgrade_tasks:
             upgrade_task = self._upgrade_tasks.popleft()
-            self._upgradeFile(upgrade_task.storage_path, upgrade_task.file_name, upgrade_task.configuration_type)  # Upgrade this file.
+            self._upgradeFile(upgrade_task.storage_path, upgrade_task.file_name, upgrade_task.configuration_type) #Upgrade this file.
 
         if upgraded:
-            message = UM.Message.Message(text = catalogue.i18nc("@info:version-upgrade", "A configuration from an older version of {0} was imported.", Application.getInstance().getApplicationName()), title = catalogue.i18nc("@info:title", "Version Upgrade"))
+            message = UM.Message.Message(text=catalogue.i18nc("@info:version-upgrade", "A configuration from an older version of {0} was imported.", Application.getInstance().getApplicationName()))
             message.show()
         return upgraded
 
@@ -172,7 +139,7 @@ class VersionUpgradeManager:
     #   \param file_name The path to the file to upgrade, relative to the
     #   storage path.
     #   \param configuration_type The file type of the specified file.
-    def upgradeExtraFile(self, storage_path: str, file_name: str, configuration_type: str) -> None:
+    def upgradeExtraFile(self, storage_path, file_name, configuration_type):
         self._upgrade_tasks.append(UpgradeTask(storage_path = storage_path, file_name = file_name, configuration_type = configuration_type))
 
     # private:
@@ -185,39 +152,28 @@ class VersionUpgradeManager:
     #
     #   \param version_upgrade_plugin The plug-in object of the version upgrade
     #   plug-in.
-    def _addVersionUpgrade(self, version_upgrade_plugin: PluginObject) -> None:
+    def _addVersionUpgrade(self, version_upgrade_plugin):
         meta_data = self._registry.getMetaData(version_upgrade_plugin.getPluginId())
         if "version_upgrade" not in meta_data:
             Logger.log("w", "Version upgrade plug-in %s doesn't define any configuration types it can upgrade.", version_upgrade_plugin.getPluginId())
-            return  # Don't need to add.
+            return #Don't need to add.
 
-        # Take a note of the source version of each configuration type. The source directories defined in each version
-        # upgrade should only be limited to that version.
-        src_version_dict = {}
-        for item in meta_data.get("version_upgrade", {}):
-            configuration_type, src_version = item
-            src_version_dict[configuration_type] = src_version
-
-        # Additional metadata about the source types: How to recognise the version and where to find them.
+        #Additional metadata about the source types: How to recognise the version and where to find them.
         if "sources" in meta_data:
             for configuration_type, source in meta_data["sources"].items():
                 if "get_version" in source:
-                    self._get_version_functions[configuration_type] = source["get_version"]  # May overwrite from other plug-ins that can also load the same configuration type.
+                    self._get_version_functions[configuration_type] = source["get_version"] #May overwrite from other plug-ins that can also load the same configuration type.
                 if "location" in source:
-                    if configuration_type in src_version_dict:
-                        src_version = src_version_dict[configuration_type]
-                        if configuration_type not in self._storage_paths:
-                            self._storage_paths[configuration_type] = {}
-                        if src_version not in self._storage_paths[configuration_type]:
-                            self._storage_paths[configuration_type][src_version] = set()
-                        self._storage_paths[configuration_type][src_version] |= source["location"]
+                    if configuration_type not in self._storage_paths:
+                        self._storage_paths[configuration_type] = set()
+                    self._storage_paths[configuration_type] |= source["location"]
 
         upgrades = self._registry.getMetaData(version_upgrade_plugin.getPluginId())["version_upgrade"]
-        for source, destination in upgrades.items():  # Each conversion that this plug-in can perform.
+        for source, destination in upgrades.items(): #Each conversion that this plug-in can perform.
             source_type, source_version = source
             destination_type, destination_version, upgrade_function = destination
 
-            # Fill in the dictionary representing the graph, if it doesn't have the keys yet.
+            #Fill in the dictionary representing the graph, if it doesn't have the keys yet.
             if (destination_type, destination_version) not in self._version_upgrades:
                 self._version_upgrades[(destination_type, destination_version)] = set()
             self._version_upgrades[(destination_type, destination_version)].add((source_type, source_version, upgrade_function)) #Add the edge to the graph.
@@ -228,23 +184,22 @@ class VersionUpgradeManager:
     #   \return A dictionary of type/version pairs that map to functions that
     #   upgrade said data format one step towards the most recent version, such
     #   that the fewest number of steps is required.
-    def _findShortestUpgradeRoutes(self) -> Dict[Tuple[str, int], Tuple[str, int, Callable[[str, str], Optional[Tuple[List[str], List[str]]]]]]:
-        # For each (type, version) tuple, which upgrade function to use to upgrade it towards the newest versions.
-        result = {}  # type: Dict[Tuple[str, int], Tuple[str, int, Callable[[str, str], Optional[Tuple[List[str], List[str]]]]]]
+    def _findShortestUpgradeRoutes(self):
+        result = {} #For each (type, version) tuple, which upgrade function to use to upgrade it towards the newest versions.
 
-        # Perform a many-to-many shortest path search with Dijkstra's algorithm.
-        front = collections.deque()  # type: collections.deque #Use as a queue for breadth-first iteration: Append right, pop left.
+        #Perform a many-to-many shortest path search with Dijkstra's algorithm.
+        front = collections.deque() #Use as a queue for breadth-first iteration: Append right, pop left.
         for configuration_type, version in self._current_versions:
             front.append((configuration_type, version))
-        explored_versions = set()  # type: Set[Tuple[str, int]]
+        explored_versions = set()
         while len(front) > 0:
-            destination_type, destination_version = front.popleft()  # To make it a queue, pop on the opposite side of where you append!
-            if (destination_type, destination_version) in self._version_upgrades:  # We can upgrade to this version.
+            destination_type, destination_version = front.popleft() #To make it a queue, pop on the opposite side of where you append!
+            if (destination_type, destination_version) in self._version_upgrades: #We can upgrade to this version.
                 for source_type, source_version, upgrade_function in self._version_upgrades[(destination_type, destination_version)]:
                     if (source_type, source_version) in explored_versions:
                         continue
                     front.append((source_type, source_version))
-                    if (source_type, source_version) not in result:  # First time we encounter this version. Due to breadth-first search, this must be part of the shortest route then.
+                    if (source_type, source_version) not in result: #First time we encounter this version. Due to breadth-first search, this must be part of the shortest route then.
                         result[(source_type, source_version)] = (destination_type, destination_version, upgrade_function)
             explored_versions.add((destination_type, destination_version))
 
@@ -256,70 +211,74 @@ class VersionUpgradeManager:
     #   the specified directory).
     #
     #   \param directory The directory to read the files from.
-    #   \return The filename of each file relative to the specified directory. Note that without an * in the path, it
-    #           will not look at sub directories.
-    def _getFilesInDirectory(self, directory: str) -> Iterator[str]:
-        include_sub_dirs = directory.endswith("*")
-        directory_to_search = directory
-        if include_sub_dirs:
-            # Remove the * from the directory to search.
-            directory_to_search = directory[:-1]
-        for path, directory_names, file_names in os.walk(directory_to_search, topdown = True):
-            if not include_sub_dirs:
-                # Delete the list of sub dirs.
-                directory_names.clear()
-            for filename in file_names:
+    #   \return The filename of each file relative to the specified directory.
+    def _getFilesInDirectory(self, directory):
+        for (path, directory_names, filenames) in os.walk(directory, topdown = True):
+            directory_names[:] = [] # Only go to one level.
+            for filename in filenames:
                 relative_path = os.path.relpath(path, directory)
                 yield os.path.join(relative_path, filename)
 
     ##  Gets all files that need to be upgraded.
     #
     #   \return A sequence of UpgradeTasks of files to upgrade.
-    def _getUpgradeTasks(self) -> Iterator[UpgradeTask]:
+    def _getUpgradeTasks(self):
         storage_path_prefixes = set()
         storage_path_prefixes.add(Resources.getConfigStoragePath())
         storage_path_prefixes.add(Resources.getDataStoragePath())
+        for old_configuration_type, storage_paths in self._storage_paths.items():
+            for prefix in storage_path_prefixes:
+                for storage_path in storage_paths:
+                    path = os.path.join(prefix, storage_path)
+                    for configuration_file in self._getFilesInDirectory(path):
+                        yield UpgradeTask(storage_path = path, file_name = configuration_file, configuration_type = old_configuration_type)
 
-        # Make sure the types and paths are ordered so we always get the same results.
-        self._storage_paths = collections.OrderedDict(sorted(self._storage_paths.items()))
-        for key in self._storage_paths:
-            self._storage_paths[key] = collections.OrderedDict(sorted(self._storage_paths[key].items()))
+    def copyVersionFolder(self, src_path, dest_path):
+        Logger.log("i", "Copying directory from '%s' to '%s'", src_path, dest_path)
+        # we first copy everything to a temporary folder, and then move it to the new folder
+        base_dir_name = os.path.basename(src_path)
+        temp_root_dir_path = tempfile.mkdtemp("cura-copy")
+        temp_dir_path = os.path.join(temp_root_dir_path, base_dir_name)
+        # src -> temp -> dest
+        shutil.copytree(src_path, temp_dir_path)
+        shutil.move(temp_dir_path, dest_path)
 
-        # Use pattern: /^(pattern_a|pattern_b|pattern_c|...)$/
-        combined_regex_ignored_files = "^(" + "|".join(self._ignored_files) + ")"
-        for old_configuration_type, version_storage_paths_dict in self._storage_paths.items():
-            for src_version, storage_paths in version_storage_paths_dict.items():
-                for prefix in storage_path_prefixes:
-                    for storage_path in storage_paths:
-                        path = os.path.join(prefix, storage_path)
-                        for configuration_file in self._getFilesInDirectory(path):
-                            # Get file version. Only add this upgrade task if the current file version matches with
-                            # the defined version that scans through this folder.
-                            if re.match(combined_regex_ignored_files, configuration_file):
-                                continue
-                            try:
-                                with open(os.path.join(path, configuration_file), "r", encoding = "utf-8") as f:
-                                    file_version = self._get_version_functions[old_configuration_type](f.read())
-                                    if file_version != src_version:
-                                        continue
-                            except:
-                                Logger.log("w", "Failed to get file version: %s, skip it", configuration_file)
-                                continue
-
-                            Logger.log("i", "Create upgrade task for configuration file [%s] with type [%s] and source version [%s]",
-                                       configuration_file, old_configuration_type, file_version)
-                            yield UpgradeTask(storage_path = path, file_name = configuration_file,
-                                              configuration_type = old_configuration_type)
+    ##  Stores an old version of a configuration file away.
+    #
+    #   This old file is intended as a back-up. It will be stored in the ./old
+    #   directory in the resource directory, in a subdirectory made specifically
+    #   for the version of the old file. The subdirectory will mirror the
+    #   directory structure of the original directory.
+    #
+    #   \param resource_directory The resource directory of the configuration
+    #   type of the file in question.
+    #   \param relative_path The path relative to the resource directory to the
+    #   file in question.
+    #   \param old_version The version number in the file in question.
+    def _storeOldFile(self, resource_directory, relative_path, old_version):
+        newpath = os.path.join(resource_directory, "old", str(old_version), relative_path)
+        if os.path.exists(newpath): #If we've updated previously but this old version was launched again, overwrite the old configuration.
+            try:
+                os.remove(newpath)
+            except OSError: #Couldn't remove. Permissions?
+                return
+        try: #For speed, first just try to rename the file without checking if the directory exists and stuff.
+            os.rename(os.path.join(resource_directory, relative_path), newpath) #Store the old file away.
+        except FileNotFoundError: #Assume the target directory doesn't exist yet. The other case is that the file itself doesn't exist, but that's a coding error anyway.
+            try:
+                os.makedirs(os.path.join(resource_directory, "old", str(old_version)))
+            except OSError: #Assume that the directory already existed. Otherwise it's probably a permission error or OS-internal error, in which case we can't write anyway.
+                pass
+            try:
+                os.rename(os.path.join(resource_directory, relative_path), newpath) #Try again!
+            except FileExistsError: #Couldn't remove the old file for some other reason. Internal OS error?
+                pass
+        except FileExistsError:
+            pass
 
     ##  Gets the version of the given file data
-    def getFileVersion(self, configuration_type: str, file_data: str) -> Optional[int]:
-        if configuration_type not in self._get_version_functions:
-            return None
-        try:
-            return self._get_version_functions[configuration_type](file_data)
-        except:
-            Logger.logException("w", "Unable to get version from file.")
-            return None
+    def getFileVersion(self, configuration_type, file_data):
+        return self._get_version_functions[configuration_type](file_data)
 
     ##  Upgrades a single file to any version in self._current_versions.
     #
@@ -331,7 +290,7 @@ class VersionUpgradeManager:
     #   \param old_configuration_type The type of the configuration file before
     #   upgrading it.
     #   \return True if the file was successfully upgraded, or False otherwise.
-    def _upgradeFile(self, storage_path_absolute: str, configuration_file: str, old_configuration_type: str) -> bool:
+    def _upgradeFile(self, storage_path_absolute, configuration_file, old_configuration_type):
         configuration_file_absolute = os.path.join(storage_path_absolute, configuration_file)
 
         # Read the old file.
@@ -351,7 +310,6 @@ class VersionUpgradeManager:
             old_version = self._get_version_functions[old_configuration_type](files_data[0])
         except:  # Version getter gives an exception. Not a valid file. Can't upgrade it then.
             return False
-
         version = old_version
         configuration_type = old_configuration_type
 
@@ -362,18 +320,20 @@ class VersionUpgradeManager:
             return False
 
         filenames_without_extension = [self._stripMimeTypeExtension(mime_type, configuration_file)]
-        result_data = self.updateFilesData(configuration_type, version, files_data, filenames_without_extension)
+        result_data = self.updateFilesData(configuration_type, version,
+                                                            files_data, filenames_without_extension)
         if not result_data:
             return False
         configuration_type, version, files_data, filenames_without_extension = result_data
 
         # If the version changed, save the new files.
         if version != old_version or configuration_type != old_configuration_type:
+            self._storeOldFile(storage_path_absolute, configuration_file, old_version)
 
             # Finding out where to store these files.
-            resource_type, mime_type_name = self._current_versions[(configuration_type, version)]
+            resource_type, mime_type = self._current_versions[(configuration_type, version)]
             storage_path = Resources.getStoragePathForType(resource_type)
-            mime_type = UM.MimeTypeDatabase.MimeTypeDatabase.getMimeType(mime_type_name)  # Get the actual MIME type object, from the name.
+            mime_type = UM.MimeTypeDatabase.MimeTypeDatabase.getMimeType(mime_type)  # Get the actual MIME type object, from the name.
             if mime_type.preferredSuffix:
                 extension = "." + mime_type.preferredSuffix
             elif mime_type.suffixes:
@@ -394,7 +354,7 @@ class VersionUpgradeManager:
             return True
         return False  # Version didn't change. Was already current.
 
-    def updateFilesData(self, configuration_type: str, version: int, files_data: List[str], file_names_without_extension: List[str]) -> Optional[FilesDataUpdateResult]:
+    def updateFilesData(self, configuration_type, version, files_data, file_names_without_extension):
         old_configuration_type = configuration_type
 
         # Keep converting the file until it's at one of the current versions.
@@ -403,12 +363,12 @@ class VersionUpgradeManager:
                 # No version upgrade plug-in claims to be able to upgrade this file.
                 return None
             new_type, new_version, upgrade_step = self._upgrade_routes[(configuration_type, version)]
-            new_file_names_without_extension = []  # type: List[str]
-            new_files_data = []  # type: List[str]
+            new_file_names_without_extension = []
+            new_files_data = []
             for file_idx, file_data in enumerate(files_data):
                 try:
                     upgrade_step_result = upgrade_step(file_data, file_names_without_extension[file_idx])
-                except Exception:  # Upgrade failed due to a coding error in the plug-in.
+                except Exception as e:  # Upgrade failed due to a coding error in the plug-in.
                     Logger.logException("w", "Exception in %s upgrade with %s: %s", old_configuration_type,
                                         upgrade_step.__module__, traceback.format_exc())
                     return None
@@ -425,12 +385,12 @@ class VersionUpgradeManager:
             version = new_version
             configuration_type = new_type
 
-        return FilesDataUpdateResult(configuration_type = configuration_type,
-                                     version = version,
-                                     files_data = files_data,
-                                     file_names_without_extension = file_names_without_extension)
+        return FilesDataUpdateResult(configuration_type=configuration_type,
+                                     version=version,
+                                     files_data=files_data,
+                                     file_names_without_extension=file_names_without_extension)
 
-    def _stripMimeTypeExtension(self, mime_type: MimeType, file_name: str) -> str:
+    def _stripMimeTypeExtension(self, mime_type, file_name):
         suffixes = mime_type.suffixes[:]
         if mime_type.preferredSuffix:
             suffixes.append(mime_type.preferredSuffix)
@@ -439,9 +399,3 @@ class VersionUpgradeManager:
                 return file_name[: -len(suffix) - 1]  # last -1 is for the dot separating name and extension.
 
         return file_name
-
-    __instance = None   # type: VersionUpgradeManager
-
-    @classmethod
-    def getInstance(cls, *args, **kwargs) -> "VersionUpgradeManager":
-        return cls.__instance

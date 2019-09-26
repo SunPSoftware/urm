@@ -1,5 +1,5 @@
 # Copyright (c) 2016 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from UM.FileHandler.FileWriter import FileWriter
 from UM.Scene.Iterator.BreadthFirstIterator import BreadthFirstIterator
@@ -8,8 +8,8 @@ from UM.Scene.SceneNode import SceneNode
 
 ##  Base class for mesh writer objects
 class MeshWriter(FileWriter):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self):
+        super().__init__()
     
     ##  Output a collection of nodes to stream in such a way that it makes sense
     #   for the file format.
@@ -34,6 +34,6 @@ class MeshWriter(FileWriter):
     def _meshNodes(nodes):
         for root in nodes:
             yield from filter(
-                lambda child: isinstance(child, SceneNode) and child.isSelectable() and child.getMeshData(),
+                lambda child: type(child) is SceneNode and child.getMeshData(),
                 BreadthFirstIterator(root)
             )

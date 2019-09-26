@@ -1,5 +1,5 @@
 # Copyright (c) 2015 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from . import Operation
 
@@ -48,7 +48,16 @@ class LayFlatOperation(Operation.Operation):
         # Note: Y & Z axis are swapped
 
         #Transform mesh first to get the current positions of the vertices.
-        transformed_vertices = self._node.getMeshDataTransformedVertices()
+        transformed_vertices = None
+        if not self._node.callDecoration("isGroup"):
+            transformed_vertices = self._node.getMeshDataTransformed().getVertices()
+        else:
+            #For groups, get the vertices of all children and process them as a single mesh
+            for child in self._node.getChildren():
+                if transformed_vertices is None:
+                    transformed_vertices = child.getMeshDataTransformed().getVertices()
+                else:
+                    transformed_vertices = numpy.concatenate((transformed_vertices, child.getMeshDataTransformed().getVertices()), axis = 0)
 
         min_y_vertex = transformed_vertices[transformed_vertices.argmin(0)[1]]
         dot_min = 1.0 #Minimum y-component of direction vector.
@@ -77,8 +86,16 @@ class LayFlatOperation(Operation.Operation):
         self._node.rotate(Quaternion.fromAngleAxis(rad, Vector.Unit_Z), SceneNode.TransformSpace.Parent)
 
         #Apply the transformation so we get new vertex coordinates.
-        transformed_vertices = self._node.getMeshDataTransformedVertices()
-
+        transformed_vertices = None
+        if not self._node.callDecoration("isGroup"):
+            transformed_vertices = self._node.getMeshDataTransformed().getVertices()
+        else:
+            #For groups, get the vertices of all children and process them as a single mesh
+            for child in self._node.getChildren():
+                if transformed_vertices is None:
+                    transformed_vertices = child.getMeshDataTransformed().getVertices()
+                else:
+                    transformed_vertices = numpy.concatenate((transformed_vertices, child.getMeshDataTransformed().getVertices()), axis = 0)
         min_y_vertex = transformed_vertices[transformed_vertices.argmin(0)[1]]
         dot_min = 1.0
         dot_v = None
@@ -118,10 +135,11 @@ class LayFlatOperation(Operation.Operation):
         # Rate-limited progress notification
         # This is done to prevent the UI from being flooded with progress signals.
         self._progress += progress
+
         new_time = time.monotonic()
         if not self._progress_emit_time or new_time - self._progress_emit_time > 0.5: #Must be longer than half a second ago.
-            self._progress_emit_time = new_time
             self.progress.emit(self._progress)
+            self._progress_emit_time = new_time
             self._progress = 0
 
     ##  Undoes this lay flat operation.
@@ -161,4 +179,4 @@ class LayFlatOperation(Operation.Operation):
 
     ##  Makes a programmer-readable representation of this operation.
     def __repr__(self):
-        return "LayFlatOp.(node={0})".format(self._node)
+        return "LayFlatOperation(node = {0})".format(self._node)

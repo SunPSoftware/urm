@@ -1,5 +1,5 @@
 # Copyright (c) 2015 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from PyQt5.QtCore import QObject, QUrl, Q_ENUMS
 from UM.FlameProfiler import pyqtSlot
@@ -17,6 +17,7 @@ class ResourcesProxy(QObject):
         i18n = UM.Resources.Resources.i18n
         Shaders = UM.Resources.Resources.Shaders
         UserType = UM.Resources.Resources.UserType
+        Models = UM.Resources.Resources.UserType + 10
     Q_ENUMS(Type)
 
     def __init__(self, parent = None):

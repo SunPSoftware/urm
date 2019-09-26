@@ -1,11 +1,11 @@
 # Copyright (c) 2015 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt, QEvent, QObject
+from PyQt5.QtGui import QMouseEvent
 
 from UM.InputDevice import InputDevice
 from UM.Event import MouseEvent, WheelEvent
-
 
 ##  An InputDevice subclass that processes Qt mouse events and returns a UM.Event.MouseEvent
 class QtMouseDevice(InputDevice):
@@ -17,19 +17,19 @@ class QtMouseDevice(InputDevice):
 
     def handleEvent(self, event):
         if event.type() == QEvent.MouseButtonPress:
-            ex, ey = self._normalizeCoordinates(event.windowPos().x(), event.windowPos().y())
+            ex, ey = self._normalizeCoordinates(event.x(), event.y())
             e = MouseEvent(MouseEvent.MousePressEvent, ex, ey, self._x, self._y, self._qtButtonsToButtonList(event.buttons()))
             self._x = ex
             self._y = ey
             self.event.emit(e)
         elif event.type() == QEvent.MouseMove:
-            ex, ey = self._normalizeCoordinates(event.windowPos().x(), event.windowPos().y())
+            ex, ey = self._normalizeCoordinates(event.x(), event.y())
             e = MouseEvent(MouseEvent.MouseMoveEvent, ex, ey, self._x, self._y, self._qtButtonsToButtonList(event.buttons()))
             self._x = ex
             self._y = ey
             self.event.emit(e)
         elif event.type() == QEvent.MouseButtonRelease:
-            ex, ey = self._normalizeCoordinates(event.windowPos().x(), event.windowPos().y())
+            ex, ey = self._normalizeCoordinates(event.x(), event.y())
             e = MouseEvent(MouseEvent.MouseReleaseEvent, ex, ey, self._x, self._y, self._qtButtonsToButtonList(event.button()))
             self._x = ex
             self._y = ey

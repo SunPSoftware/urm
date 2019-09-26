@@ -1,23 +1,23 @@
 # Copyright (c) 2015 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 import inspect
 
-from PyQt5.QtCore import pyqtProperty, pyqtSignal, QObject, QCoreApplication, pyqtSlot
+from PyQt5.QtCore import pyqtProperty, pyqtSignal, QObject, QUrl, QCoreApplication, pyqtSlot
 from PyQt5.QtQml import QJSValue
+# from UM.FlameProfiler import pyqtSlot
 
 from UM.i18n import i18nCatalog
 
-
 class i18nCatalogProxy(QObject): # [CodeStyle: Ultimaker code style requires classes to start with a upper case. But i18n is lower case by convention.]
     def __init__(self, parent = None):
-        super().__init__(parent)
+        super().__init__()
 
         self._name = None
         self._catalog = None
 
         # Slightly hacky way of getting at the QML engine defined by QtApplication.
-        engine = QCoreApplication.instance()._qml_engine
+        engine = QCoreApplication.instance()._engine
 
         self._i18n_function = self._wrapFunction(engine, self, self._call_i18n)
         self._i18nc_function = self._wrapFunction(engine, self, self._call_i18nc)
@@ -92,8 +92,7 @@ class i18nCatalogProxy(QObject): # [CodeStyle: Ultimaker code style requires cla
 
         # Get the function name and argument list.
         function_name = function.__name__
-        function_args = inspect.getfullargspec(function)[0]
-
+        function_args = inspect.getargspec(function)[0]
         if function_args[0] == "self":
             function_args = function_args[1:] # Drop "self" from argument list
 

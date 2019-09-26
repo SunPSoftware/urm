@@ -1,5 +1,5 @@
-// Copyright (c) 2018 Ultimaker B.V.
-// Uranium is released under the terms of the LGPLv3 or higher.
+// Copyright (c) 2015 Ultimaker B.V.
+// Uranium is released under the terms of the AGPLv3 or higher.
 
 import QtQuick 2.1
 import QtQuick.Controls 1.1
@@ -9,17 +9,15 @@ import QtQuick.Controls 1.1
  * It replicates some of the functionality included in QtQuick Controls'
  * ApplicationWindow class to make the menu bar actually work.
  */
-Rectangle
-{
+Rectangle {
     id: menuBackground;
 
     property QtObject window;
-    Binding
-    {
-        target: menu.__contentItem
-        property: "width"
-        value: window.width
-        when: !menu.__isNative
+    Binding {
+        target: menu.__contentItem;
+        property: "width";
+        value: window.width;
+        when: !menu.__isNative;
     }
 
     default property alias menus: menu.menus
@@ -31,19 +29,15 @@ Rectangle
 
     Keys.forwardTo: menu.__contentItem;
 
-    MenuBar
-    {
+    MenuBar {
         id: menu
 
-        Component.onCompleted:
-        {
+        //__parentWindow: menuBackground.window
+
+        Component.onCompleted: {
             __contentItem.parent = menuBackground;
         }
     }
 
-    SystemPalette
-    {
-        id: palette
-        colorGroup: SystemPalette.Active
-    }
+    SystemPalette { id: palette; colorGroup: SystemPalette.Active }
 }

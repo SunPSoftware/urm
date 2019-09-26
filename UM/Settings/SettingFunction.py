@@ -1,52 +1,41 @@
-# Copyright (c) 2019 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2016 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 import ast
-import builtins  # To check against functions that are built-in in Python.
-import math  # Imported here so it can be used easily by the setting functions.
-import uuid  # Imported here so it can be used easily by the setting functions.
-import base64  # Imported here so it can be used easily by the setting functions.
-import hashlib  # Imported here so it can be used easily by the setting functions.
-from types import CodeType
-from typing import Any, Callable, Dict, FrozenSet, NamedTuple, Optional, Set, TYPE_CHECKING
+import math # Imported here so it can be used easily by the setting functions.
+from typing import Any, Dict, Callable, Set, FrozenSet, NamedTuple
 
 from UM.Settings.Interfaces import ContainerInterface
-from UM.Settings.PropertyEvaluationContext import PropertyEvaluationContext
 from UM.Logger import Logger
 
-if TYPE_CHECKING:
-    from typing import FrozenSet
-
+MYPY = False
+if MYPY:
+    from UM.Settings.SettingInstance import SettingInstance
 
 class IllegalMethodError(Exception):
     pass
-
 
 def _debug_value(value: Any) -> Any:
     Logger.log("d", "Setting Function: %s", value)
     return value
 
-
-#
-# This class is used to evaluate Python codes (or you can call them formulas) for a setting's property. If a setting's
-# property is a static type, e.g., a string, an int, a float, etc., its value will just be interpreted as it is, but
-# when it's a Python code (formula), the value needs to be evaluated via this class.
+##  Encapsulates Python code that provides a simple value calculation function.
 #
 class SettingFunction:
     ##  Constructor.
     #
     #   \param code The Python code this function should evaluate.
-    def __init__(self, expression: str) -> None:
+    def __init__(self, code: str) -> None:
         super().__init__()
 
-        self._code = expression
+        self._code = code
 
         #  Keys of all settings that are referenced to in this function.
-        self._used_keys = frozenset()  # type: FrozenSet[str]
-        self._used_values = frozenset()  # type: FrozenSet[str]
+        self._used_keys = frozenset()  # type: frozenset[str]
+        self._used_values = frozenset()
 
-        self._compiled = None  # type: Optional[CodeType] #Actually an Optional['code'] object, but Python doesn't properly expose this 'code' object via any library.
-        self._valid = False  # type: bool
+        self._compiled = None
+        self._valid = False  # type: str
 
         try:
             tree = ast.parse(self._code, "eval")
@@ -65,10 +54,7 @@ class SettingFunction:
             Logger.log("e", "Exception in function ({0}) for setting: {1}".format(str(e), self._code))
 
     ##  Call the actual function to calculate the value.
-    #
-    #   \param value_provider The container from which to get setting values in
-    #   the formula.
-    def __call__(self, value_provider: ContainerInterface, context: Optional[PropertyEvaluationContext] = None) -> Any:
+    def __call__(self, value_provider: ContainerInterface) -> Any:
         if not value_provider:
             return None
 
@@ -76,11 +62,8 @@ class SettingFunction:
             return None
 
         locals = {} # type: Dict[str, Any]
-        # if there is a context, evaluate the values from the perspective of the original caller
-        if context is not None:
-            value_provider = context.rootStack()
         for name in self._used_values:
-            value = value_provider.getProperty(name, "value", context)
+            value = value_provider.getProperty(name, "value")
             if value is None:
                 continue
 
@@ -89,27 +72,18 @@ class SettingFunction:
         g = {}  # type: Dict[str, Any]
         g.update(globals())
         g.update(self.__operators)
-        # override operators if there is any in the context
-        if context is not None:
-            g.update(context.context.get("override_operators", {}))
 
         try:
-            if self._compiled:
-                return eval(self._compiled, g, locals)
-            Logger.log("e", "An error ocurred evaluating the function {0}.".format(self))
-            return 0
+            return eval(self._compiled, g, locals)
         except Exception as e:
-            Logger.logException("d", "An exception occurred in inherit function {0}: {1}".format(self, str(e)))
+            Logger.logException("d", "An exception occurred in inherit function %s", self)
             return 0  # Settings may be used in calculations and they need a value
 
-    def __eq__(self, other: object) -> bool:
+    def __eq__(self, other) -> bool:
         if not isinstance(other, SettingFunction):
             return False
 
         return self._code == other._code
-
-    def __hash__(self) -> int:
-        return hash(self._code)
 
     ##  Returns whether the function is ready to be executed.
     #
@@ -158,7 +132,6 @@ class SettingFunction:
 
 _VisitResult = NamedTuple("_VisitResult", [("values", Set[str]), ("keys", Set[str])])
 
-
 # Helper class used to analyze a parsed function.
 #
 # It walks a Python AST generated from a Python expression. It will analyze the AST and
@@ -166,34 +139,26 @@ _VisitResult = NamedTuple("_VisitResult", [("values", Set[str]), ("keys", Set[st
 # setting keys (strings) that are used by the expression, whereas "used values" are
 # actual variable references that are needed for the function to be executed.
 class _SettingExpressionVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
-        self.values = set()  # type: Set[str]
-        self.keys = set()  # type: Set[str]
+        self.values = set()
+        self.keys = set()
 
     def visit(self, node: ast.AST) -> _VisitResult:
         super().visit(node)
         return _VisitResult(values = self.values, keys = self.keys)
 
-    def visit_Name(self, node: ast.Name) -> None:  # [CodeStyle: ast.NodeVisitor requires this function name]
+    def visit_Name(self, node: ast.AST) -> None: # [CodeStyle: ast.NodeVisitor requires this function name]
         if node.id in self._blacklist:
             raise IllegalMethodError(node.id)
 
-        if node.id not in self._knownNames and node.id not in dir(builtins):
+        if node.id not in self._knownNames and node.id not in __builtins__:
             self.values.add(node.id)
             self.keys.add(node.id)
 
-    ##  This one is used before Python 3.8 to visit string types.
-    #
-    #   visit_Str will be marked as deprecated from Python 3.8 and onwards.
     def visit_Str(self, node: ast.AST) -> None:
-        if node.s not in self._knownNames and node.s not in dir(builtins):  # type: ignore #AST uses getattr stuff, so ignore type of node.s.
-            self.keys.add(node.s)  # type: ignore
-
-    ##  This one is used on Python 3.8+ to visit string types.
-    def visit_Constant(self, node: ast.AST) -> None:
-        if isinstance(node.value, str) and node.value not in self._knownNames and node.value not in dir(builtins):  # type: ignore #AST uses getattr stuff, so ignore type of node.value.
-            self.keys.add(node.value)  # type: ignore
+        if node.s not in self._knownNames and node.s not in __builtins__:
+            self.keys.add(node.s)
 
     _knownNames = {
         "math",
@@ -201,11 +166,8 @@ class _SettingExpressionVisitor(ast.NodeVisitor):
         "min",
         "debug",
         "sum",
-        "len",
-        "uuid",
-        "hashlib",
-        "base64"
-    }  # type: Set[str]
+        "len"
+    }
 
     _blacklist = {
         "sys",
@@ -215,4 +177,4 @@ class _SettingExpressionVisitor(ast.NodeVisitor):
         "eval",
         "exec",
         "subprocess",
-    }  # type: Set[str]
+    }

@@ -1,5 +1,5 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from UM.Application import Application
 from UM.Resources import Resources
@@ -7,12 +7,6 @@ from UM.Math.Color import Color
 
 from UM.View.RenderPass import RenderPass
 from UM.View.GL.OpenGL import OpenGL
-
-from typing import List
-
-MYPY = False
-if MYPY:
-    from UM.View.GL.ShaderProgram import ShaderProgram
 
 
 ##  A RenderPass subclass providing the final composition render.
@@ -40,18 +34,18 @@ class CompositePass(RenderPass):
         self._gl = OpenGL.getInstance().getBindingsObject()
         self._renderer = Application.getInstance().getRenderer()
 
-        self._layer_bindings = ["default", "selection"]
+        self._layer_bindings = [ "default", "selection" ]
 
     ##  Get the shader currently used for compositing.
-    def getCompositeShader(self) -> "ShaderProgram":
+    def getCompositeShader(self):
         return self._shader
 
     ##  Set the shader to use for compositing.
-    def setCompositeShader(self, shader: "ShaderProgram") -> None:
+    def setCompositeShader(self, shader):
         self._shader = shader
 
     ##  Get the current layer bindings.
-    def getLayerBindings(self) -> List[str]:
+    def getLayerBindings(self):
         return self._layer_bindings
 
     ##  Set the layer bindings to use.
@@ -62,11 +56,11 @@ class CompositePass(RenderPass):
     #   the "selection" RenderPass is bound to texture unit 1.
     #
     #   \param bindings The list of layer bindings to use.
-    def setLayerBindings(self, bindings: List[str]) -> None:
+    def setLayerBindings(self, bindings):
         self._layer_bindings = bindings
 
     ##  Perform the actual rendering of the render pass.
-    def render(self) -> None:
+    def render(self):
         self._shader.bind()
 
         outline_size = 2.0

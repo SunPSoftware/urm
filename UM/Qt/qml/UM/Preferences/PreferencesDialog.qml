@@ -1,5 +1,5 @@
 // Copyright (c) 2015 Ultimaker B.V.
-// Uranium is released under the terms of the LGPLv3 or higher.
+// Uranium is released under the terms of the AGPLv3 or higher.
 
 import QtQuick 2.1
 import QtQuick.Controls 1.1
@@ -38,7 +38,7 @@ Dialog
                 bottom: parent.bottom;
             }
 
-            width: 7 * UM.Theme.getSize("line").width;
+            width: 20 * UM.Theme.getSize("line").width;
 
             alternatingRowColors: false;
             headerVisible: false;
@@ -103,7 +103,6 @@ Dialog
 
     leftButtons: Button
     {
-        id: defaultsButton
         text: catalog.i18nc("@action:button", "Defaults");
         enabled: stackView.currentItem.resetEnabled;
         onClicked: stackView.currentItem.reset();
@@ -111,7 +110,6 @@ Dialog
 
     rightButtons: Button
     {
-        id: closeButton
         text: catalog.i18nc("@action:button", "Close");
         iconName: "dialog-close";
         onClicked: base.accept();
@@ -147,6 +145,7 @@ Dialog
         //This uses insertPage here because ListModel is stupid and does not allow using qsTr() on elements.
         insertPage(0, catalog.i18nc("@title:tab", "General"), Qt.resolvedUrl("GeneralPage.qml"));
         insertPage(1, catalog.i18nc("@title:tab", "Settings"), Qt.resolvedUrl("SettingVisibilityPage.qml"));
+        insertPage(2, catalog.i18nc("@title:tab", "Plugins"), Qt.resolvedUrl("PluginsPage.qml"));
 
         setPage(0)
     }

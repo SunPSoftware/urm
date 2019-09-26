@@ -1,18 +1,14 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
-import datetime
 import os
 import os.path
 import re
 import shutil
-import tempfile
-from typing import Dict, Generator, List, Optional, Union, cast
+from typing import List
 
 from UM.Logger import Logger
 from UM.Platform import Platform
-from UM.Version import Version
-
 
 class ResourceTypeError(Exception):
     pass
@@ -46,20 +42,13 @@ class Resources:
     ContainerStacks = 10
     ## Location of cached data
     Cache = 11
-    ## Location of plugins
-    Plugins = 12
-    ## Location of data regarding bundled packages
-    BundledPackages = 13
-    ## Location of text files
-    Texts = 14
 
     ## Any custom resource types should be greater than this to prevent collisions with standard types.
     UserType = 128
+    Models = UserType + 10
 
     ApplicationIdentifier = "UM"
     ApplicationVersion = "unknown"
-
-    __bundled_resources_path = None #type: Optional[str]
 
     ##  Get the path to a certain resource file
     #
@@ -93,7 +82,7 @@ class Resources:
     #   \return A list of absolute paths to resources of the specified type.
     @classmethod
     def getAllResourcesOfType(cls, resource_type: int) -> List[str]:
-        files = {} #type: Dict[str, List[str]]
+        files = {}
         search_dirs = cls.getAllPathsForType(resource_type)
 
         for directory in search_dirs:
@@ -106,7 +95,7 @@ class Resources:
                     continue
                 for entry in entries:
                     if not entry.startswith('.') and os.path.isfile(os.path.join(root, entry)):
-                        if entry not in files:
+                        if not entry in files:
                             files[entry] = []
                         files[entry].append(os.path.join(root, entry))
 
@@ -153,8 +142,8 @@ class Resources:
 
     ##  Return a path where a certain resource type can be stored.
     #
-    #   \param type The type of resource to store.
-    #   \return An absolute path where the given resource type can be stored.
+    #   \param type \type{int} The type of resource to store.
+    #   \return \type{string} An absolute path where the given resource type can be stored.
     #
     #   \exception UnsupportedStorageTypeError Raised when writing type is not supported.
     @classmethod
@@ -165,11 +154,14 @@ class Resources:
         if cls.__config_storage_path is None or cls.__data_storage_path is None:
             cls.__initializeStoragePaths()
 
+        path = None
         # Special casing for Linux, since configuration should be stored in ~/.config but data should be stored in ~/.local/share
         if resource_type == cls.Preferences:
             path = cls.__config_storage_path
         elif resource_type == cls.Cache:
             path = cls.__cache_storage_path
+        elif resource_type == cls.Models:
+            path = os.path.join(Resources._getConfigStorageRootPath(), cls.__types_storage[resource_type])
         else:
             path = os.path.join(cls.__data_storage_path, cls.__types_storage[resource_type])
 
@@ -185,13 +177,13 @@ class Resources:
     #
     #   \param path The path to add.
     @classmethod
-    def addSearchPath(cls, path: str) -> None:
+    def addSearchPath(cls, path: str):
         if os.path.isdir(path) and path not in cls.__paths:
             cls.__paths.append(path)
 
     ##  Remove a resource search path.
     @classmethod
-    def removeSearchPath(cls, path: str) -> None:
+    def removeSearchPath(cls, path: str):
         if path in cls.__paths:
             del cls.__paths[cls.__paths.index(path)]
 
@@ -200,7 +192,7 @@ class Resources:
     #   \param type \type{int} An integer that can be used to identify the type. Should be greater than UserType.
     #   \param path \type{string} The path relative to the search paths where resources of this type can be found./
     @classmethod
-    def addType(cls, resource_type: int, path: str) -> None:
+    def addType(cls, resource_type: int, path: str):
         if resource_type in cls.__types:
             raise ResourceTypeError("Type {0} already exists".format(resource_type))
 
@@ -214,7 +206,7 @@ class Resources:
     #   \param type The type to add a storage path for.
     #   \param path The path to add as storage path. Should be relative to the resources storage path.
     @classmethod
-    def addStorageType(cls, resource_type: int, path: str) -> None:
+    def addStorageType(cls, resource_type: int, path: str):
         if resource_type in cls.__types:
             raise ResourceTypeError("Type {0} already exists".format(resource_type))
 
@@ -240,25 +232,16 @@ class Resources:
             cls.__initializeStoragePaths()
         return cls.__data_storage_path
 
-    ##  Gets the cache storage path.
-    #
-    #   This is where the application stores cache files.
-    @classmethod
-    def getCacheStoragePath(cls) -> str:
-        if not cls.__cache_storage_path:
-            cls.__initializeStoragePaths()
-        return cls.__cache_storage_path
-
     ##  Gets the search paths for resources.
     #
     #   \return A sequence of paths where resources might be.
     @classmethod
-    def getSearchPaths(cls) -> Generator[str, None, None]:
+    def getSearchPaths(cls):
         yield from cls.__paths
 
     ##  Remove a custom resource type.
     @classmethod
-    def removeType(cls, resource_type: int) -> None:
+    def removeType(cls, resource_type: int):
         if resource_type not in cls.__types:
             return
 
@@ -270,65 +253,14 @@ class Resources:
         if resource_type in cls.__types_storage:
             del cls.__types_storage[resource_type]
 
-    ##  Performs a factory reset, compressing the current state of configuration
-    #   into an archive and emptying the resource folders.
-    #
-    #   When calling this function, be sure to quit the application immediately
-    #   afterwards, lest the save function write the configuration anew.
-    @classmethod
-    def factoryReset(cls) -> None:
-        config_path = cls.getConfigStoragePath()
-        data_path = cls.getDataStoragePath()
-        cache_path = cls.getCacheStoragePath()
-
-        folders_to_backup = set()
-        folders_to_remove = set()  # only cache folder needs to be removed
-
-        folders_to_backup.add(config_path)
-        folders_to_backup.add(data_path)
-
-        # Only remove the cache folder if it's not the same as data or config
-        if cache_path not in folders_to_backup:
-            folders_to_remove.add(cache_path)
-
-        for folder in folders_to_remove:
-            shutil.rmtree(folder, ignore_errors = True)
-        for folder in folders_to_backup:
-            base_name = os.path.basename(folder)
-            root_dir = os.path.dirname(folder)
-
-            date_now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            idx = 0
-            file_name = base_name + "_" + date_now
-            zip_file_path = os.path.join(root_dir, file_name + ".zip")
-            while os.path.exists(zip_file_path):
-                idx += 1
-                file_name = base_name + "_" + date_now + "_" + str(idx)
-                zip_file_path = os.path.join(root_dir, file_name + ".zip")
-            try:
-                # only create the zip backup when the folder exists
-                if os.path.exists(folder):
-                    # remove the .zip extension because make_archive() adds it
-                    zip_file_path = zip_file_path[:-4]
-                    shutil.make_archive(zip_file_path, "zip", root_dir = root_dir, base_dir = base_name)
-
-                    # remove the folder only when the backup is successful
-                    shutil.rmtree(folder, ignore_errors = True)
-
-                # create an empty folder so Resources will not try to copy the old ones
-                os.makedirs(folder, 0o0755, exist_ok=True)
-
-            except:
-                Logger.logException("e", "Failed to backup [%s] to file [%s]", folder, zip_file_path)
-
     ## private:
 
     # Returns a list of paths where args was found.
     @classmethod
-    def __find(cls, resource_type: int, *args: str) -> List[str]:
+    def __find(cls, resource_type: int, *args) -> List[str]:
         suffix = cls.__types.get(resource_type, None)
         if suffix is None:
-            return []
+            return None
 
         files = []
         for path in cls.__paths:
@@ -338,12 +270,11 @@ class Resources:
         return files
 
     @classmethod
-    def _getConfigStorageRootPath(cls) -> str:
+    def _getConfigStorageRootPath(cls):
         # Returns the path where we store different versions of app configurations
+        config_path = None
         if Platform.isWindows():
-            config_path = os.getenv("APPDATA")
-            if not config_path: # Protect if the getenv function returns None (it should never happen)
-                config_path = "."
+            config_path = os.path.abspath(".")
         elif Platform.isOSX():
             config_path = os.path.expanduser("~/Library/Application Support")
         elif Platform.isLinux():
@@ -357,14 +288,12 @@ class Resources:
         return config_path
 
     @classmethod
-    def _getPossibleConfigStorageRootPathList(cls) -> List[str]:
+    def _getPossibleConfigStorageRootPathList(cls):
         # Returns all possible root paths for storing app configurations (in old and new versions)
         config_root_list = [Resources._getConfigStorageRootPath()]
         if Platform.isWindows():
-            # it used to be in LOCALAPPDATA on Windows
-            config_path = os.getenv("LOCALAPPDATA")
-            if config_path: # Protect if the getenv function returns None (it should never happen)
-                config_root_list.append(config_path)
+            # use the program root direcotry
+            config_root_list.append(os.path.abspath("."))
         elif Platform.isOSX():
             config_root_list.append(os.path.expanduser("~"))
 
@@ -377,8 +306,7 @@ class Resources:
 
         # Returns all possible root paths for storing app configurations (in old and new versions)
         if Platform.isLinux():
-            # We can cast here to str since the _getDataStorageRootPath always returns a string if platform is Linux
-            data_root_list.append(os.path.join(cast(str, Resources._getDataStorageRootPath()), cls.ApplicationIdentifier))
+            data_root_list.append(os.path.join(Resources._getDataStorageRootPath(), cls.ApplicationIdentifier))
         else:
             # on Windows and Mac, data and config are saved in the same place
             data_root_list = Resources._getPossibleConfigStorageRootPathList()
@@ -386,7 +314,7 @@ class Resources:
         return data_root_list
 
     @classmethod
-    def _getDataStorageRootPath(cls) -> Optional[str]:
+    def _getDataStorageRootPath(cls):
         # Returns the path where we store different versions of app data
         data_path = None
         if Platform.isLinux():
@@ -397,11 +325,11 @@ class Resources:
         return data_path
 
     @classmethod
-    def _getCacheStorageRootPath(cls) -> Optional[str]:
+    def _getCacheStorageRootPath(cls):
         # Returns the path where we store different versions of app configurations
         cache_path = None
         if Platform.isWindows():
-            cache_path = os.getenv("LOCALAPPDATA")
+            cache_path = os.path.abspath(".")
         elif Platform.isOSX():
             cache_path = None
         elif Platform.isLinux():
@@ -413,14 +341,15 @@ class Resources:
         return cache_path
 
     @classmethod
-    def __initializeStoragePaths(cls) -> None:
+    def __initializeStoragePaths(cls):
         Logger.log("d", "Initializing storage paths")
         # use nested structure: <app-name>/<version>/...
         if cls.ApplicationVersion == "master" or cls.ApplicationVersion == "unknown":
-            storage_dir_name = os.path.join(cls.ApplicationIdentifier, cls.ApplicationVersion)
+            storage_dir_name = os.path.join("userdata", cls.ApplicationVersion)
         else:
+            from UM.Version import Version
             version = Version(cls.ApplicationVersion)
-            storage_dir_name = os.path.join(cls.ApplicationIdentifier, "%s.%s" % (version.getMajor(), version.getMinor()))
+            storage_dir_name = os.path.join("userdata", "%s.%s" % (version.getMajor(), version.getMinor()))
 
         # config is saved in "<CONFIG_ROOT>/<storage_dir_name>"
         cls.__config_storage_path = os.path.join(Resources._getConfigStorageRootPath(), storage_dir_name)
@@ -445,7 +374,7 @@ class Resources:
             if Platform.isWindows():
                 cls.__cache_storage_path = os.path.join(cls.__cache_storage_path, "cache")
         Logger.log("d", "Cache storage path is %s", cls.__cache_storage_path)
-        if not os.path.exists(cls.__config_storage_path) or not os.path.exists(cls.__data_storage_path):
+        if not os.path.exists(cls.__config_storage_path):
             cls._copyLatestDirsIfPresent()
 
         cls.__paths.insert(0, cls.__data_storage_path)
@@ -453,7 +382,7 @@ class Resources:
     ##  Copies the directories of the latest version on this machine if present, so the upgrade will use the copies
     #   as the base for upgrade. See CURA-3529 for more details.
     @classmethod
-    def _copyLatestDirsIfPresent(cls) -> None:
+    def _copyLatestDirsIfPresent(cls):
         # Paths for the version we are running right now
         this_version_config_path = Resources.getConfigStoragePath()
         this_version_data_path = Resources.getDataStoragePath()
@@ -464,28 +393,23 @@ class Resources:
 
         Logger.log("d", "Found config: %s and data: %s", config_root_path_list, data_root_path_list)
 
-        latest_config_path = Resources._findLatestDirInPaths(config_root_path_list, dir_type = "config")
-        latest_data_path = Resources._findLatestDirInPaths(data_root_path_list, dir_type = "data")
+        latest_config_path = Resources._findLatestDirInPaths(config_root_path_list, dir_type="config")
+        latest_data_path = Resources._findLatestDirInPaths(data_root_path_list, dir_type="data")
         Logger.log("d", "Latest config path: %s and latest data path: %s", latest_config_path, latest_data_path)
         if not latest_config_path:
             # No earlier storage dirs found, do nothing
             return
 
-        # Copy config folder if needed
         if latest_config_path == this_version_config_path:
             # If the directory found matches the current version, do nothing
-            Logger.log("d", "Same config path [%s], do nothing.", latest_config_path)
-        else:
-            cls.copyVersionFolder(latest_config_path, this_version_config_path)
+            return
 
-        # Copy data folder if needed
-        if latest_data_path == this_version_data_path:
-            # If the directory found matches the current version, do nothing
-            Logger.log("d", "Same data path [%s], do nothing.", latest_config_path)
-        else:
-            # If the data dir is the same as the config dir, don't copy again
-            if latest_data_path is not None and os.path.exists(latest_data_path) and latest_data_path != latest_config_path:
-                cls.copyVersionFolder(latest_data_path, this_version_data_path)
+        # Prevent circular import
+        import UM.VersionUpgradeManager
+        UM.VersionUpgradeManager.VersionUpgradeManager.getInstance().copyVersionFolder(latest_config_path, this_version_config_path)
+        # If the data dir is the same as the config dir, don't copy again
+        if latest_data_path is not None and os.path.exists(latest_data_path) and latest_data_path != latest_config_path:
+            UM.VersionUpgradeManager.VersionUpgradeManager.getInstance().copyVersionFolder(latest_data_path, this_version_data_path)
 
         # Remove "cache" if we copied it together with config
         suspected_cache_path = os.path.join(this_version_config_path, "cache")
@@ -493,94 +417,62 @@ class Resources:
             shutil.rmtree(suspected_cache_path)
 
     @classmethod
-    def copyVersionFolder(cls, src_path: str, dest_path: str) -> None:
-        Logger.log("i", "Copying directory from '%s' to '%s'", src_path, dest_path)
-        # we first copy everything to a temporary folder, and then move it to the new folder
-        base_dir_name = os.path.basename(src_path)
-        temp_root_dir_path = tempfile.mkdtemp("cura-copy")
-        temp_dir_path = os.path.join(temp_root_dir_path, base_dir_name)
-        # src -> temp -> dest
-        try:
-            shutil.copytree(src_path, temp_dir_path, ignore = shutil.ignore_patterns("*.lock", "*.log", "old"))
-            # if the dest_path exist, it needs to be removed first
-            if not os.path.exists(dest_path):
-                shutil.move(temp_dir_path, dest_path)
-            else:
-                Logger.log("e", "Unable to copy files to %s as the folder already exists", dest_path)
-        except:
-            Logger.log("e", "Something occurred when copying the version folder from '%s' to '%s'", src_path, dest_path)
-
-    @classmethod
-    def _findLatestDirInPaths(cls, search_path_list: List[str], dir_type: str = "config") -> Optional[str]:
-        # version dir name must match: <digit(s)>.<digit(s)>
-        version_regex = re.compile(r"^[0-9]+\.[0-9]+$")
-        check_dir_type_func_dict = {
-            "data": Resources._isNonVersionedDataDir,
-            "config": Resources._isNonVersionedConfigDir
-        }
+    def _findLatestDirInPaths(cls, search_path_list, dir_type="config"):
+        # version dir name must match: <digit(s)>.<digit(s)><whatever>
+        version_regex = re.compile(r'^[0-9]+\.[0-9]+.*$')
+        check_dir_type_func_dict = {"config": Resources._isNonVersionedConfigDir,
+                                    "data": Resources._isNonVersionedDataDir,
+                                    }
         check_dir_type_func = check_dir_type_func_dict[dir_type]
 
-        # CURA-6744
-        # If the application version matches "<major>.<minor>", create a Version object for it for comparison, so we
-        # can find the directory with the highest version that's below the application version.
-        # An application version that doesn't match "<major>.<minor>", e.g. "master", probably indicates a temporary
-        # version, and in this case, this temporary version is treated as the latest version. It will ONLY upgrade from
-        # a highest "<major>.<minor>" version if it's present.
-        # For app version, there can be extra version strings at the end. For comparison, we only want the
-        # "<major>.<minor>.<patch>" part. Here we use a regex to find that part in the app version string.
-        semantic_version_regex = re.compile(r"(^[0-9]+\.([0-9]+)*).*$")
-        app_version = None  # type: Optional[Version]
-        app_version_str = cls.ApplicationVersion
-        if app_version_str is not None:
-            result = semantic_version_regex.match(app_version_str)
-            if result is not None:
-                app_version_str = result.group(0)
-                app_version = Version(app_version_str)
-
-        latest_config_path = None  # type: Optional[str]
+        latest_config_path = None
         for search_path in search_path_list:
             if not os.path.exists(search_path):
                 continue
 
-            # Give priority to a folder with files with version number in it
-            storage_dir_name_list = next(os.walk(search_path))[1]
-
-            match_dir_name_list = [n for n in storage_dir_name_list if version_regex.match(n) is not None]
-            match_dir_version_list = [{"dir_name": n, "version": Version(n)} for n in match_dir_name_list]  # type: List[Dict[str, Union[str, Version]]]
-            match_dir_version_list = sorted(match_dir_version_list, key = lambda x: x["version"], reverse = True)
-            if app_version is not None:
-                match_dir_version_list = list(x for x in match_dir_version_list if x["version"] < app_version)
-
-            if len(match_dir_version_list) > 0:
-                if isinstance(match_dir_version_list[0]["dir_name"], str):
-                    latest_config_path = os.path.join(search_path, match_dir_version_list[0]["dir_name"])  # type: ignore
-
-            if latest_config_path is not None:
-                break
-
-            # If not, check if there is a non versioned data dir
-            if check_dir_type_func(search_path):
+            if check_dir_type_func(cls, search_path):
                 latest_config_path = search_path
                 break
 
+            storage_dir_name_list = next(os.walk(search_path))[1]
+            if storage_dir_name_list:
+                storage_dir_name_list = sorted(storage_dir_name_list, reverse=True)
+                # for now we use alphabetically ordering to determine the latest version (excluding master)
+                for dir_name in storage_dir_name_list:
+                    if dir_name.endswith("master"):
+                        continue
+                    if version_regex.match(dir_name) is None:
+                        continue
+
+                    # make sure that the version we found is not newer than the current version
+                    if version_regex.match(cls.ApplicationVersion):
+                        later_version = sorted([cls.ApplicationVersion, dir_name], reverse=True)[0]
+                        if cls.ApplicationVersion != later_version:
+                            continue
+
+                    latest_config_path = os.path.join(search_path, dir_name)
+                    break
+            if latest_config_path is not None:
+                break
         return latest_config_path
 
-    @classmethod
-    def _isNonVersionedDataDir(cls, check_path: str) -> bool:
+    def _isNonVersionedDataDir(cls, check_path):
+        # checks if the given path is (probably) a valid app directory for a version earlier than 2.6
+        if not cls.__expected_dir_names_in_data:
+            return True
+
         dirs, files = next(os.walk(check_path))[1:]
         valid_dir_names = [dn for dn in dirs if dn in Resources.__expected_dir_names_in_data]
+        return valid_dir_names
 
-        return len(valid_dir_names) > 0
-
-    @classmethod
-    def _isNonVersionedConfigDir(cls, check_path: str) -> bool:
+    def _isNonVersionedConfigDir(cls, check_path):
         dirs, files = next(os.walk(check_path))[1:]
         valid_file_names = [fn for fn in files if fn.endswith(".cfg")]
 
-        return len(valid_file_names) > 0
+        return bool(valid_file_names)
 
     @classmethod
-    def addExpectedDirNameInData(cls, dir_name: str) -> None:
+    def addExpectedDirNameInData(cls, dir_name):
         cls.__expected_dir_names_in_data.append(dir_name)
 
     __expected_dir_names_in_data = []  # type: List[str]
@@ -602,17 +494,12 @@ class Resources:
         DefinitionContainers: "definitions",
         InstanceContainers: "instances",
         ContainerStacks: "stacks",
-        Plugins: "plugins",
-        BundledPackages: "bundled_packages",
-        Texts: "texts",
-    } #type: Dict[int, str]
+    }
     __types_storage = {
         Resources: "",
         Preferences: "",
         Cache: "",
-        DefinitionContainers: "definitions",
         InstanceContainers: "instances",
         ContainerStacks: "stacks",
         Themes: "themes",
-        Plugins: "plugins",
-    } #type: Dict[int, str]
+    }

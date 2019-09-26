@@ -1,9 +1,6 @@
-# Copyright (c) 2019 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
-from typing import Optional
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
-from UM.Logger import Logger
-from UM.Mesh.MeshData import MeshData
 from . import SceneNode
 
 from UM.Resources import Resources
@@ -18,7 +15,7 @@ from UM.View.RenderBatch import RenderBatch
 
 
 ##    A tool handle is a object in the scene that gives queues for what the tool it is
-#     'paired' with can do. ToolHandles are, for example, used for translation, rotation & scale handles.
+#     'paired' with can do. ToolHandles are used for translation, rotation & scale handles.
 #     They can also be used as actual objects to interact with (in the case of translation,
 #     pressing one arrow of the toolhandle locks the translation in that direction)
 class ToolHandle(SceneNode.SceneNode):
@@ -49,63 +46,52 @@ class ToolHandle(SceneNode.SceneNode):
 
         self._scene = Application.getInstance().getController().getScene()
 
-        self._solid_mesh = None  # type: Optional[MeshData]
-        self._line_mesh = None  # type: Optional[MeshData]
-        self._selection_mesh = None  # type: Optional[MeshData]
+        self._solid_mesh = None
+        self._line_mesh = None
+        self._selection_mesh = None
         self._shader = None
 
-        self._active_axis = None  # type: Optional[int]
-
-        # Auto scale is used to ensure that the tool handle will end up the same size on the camera no matter the zoom
-        # This should be used to ensure that the tool handles are still usable even if the camera is zoomed in all the way.
+        self._previous_dist = None
+        self._active_axis = None
         self._auto_scale = True
-
-        self._enabled = False
 
         self.setCalculateBoundingBox(False)
 
         Selection.selectionCenterChanged.connect(self._onSelectionCenterChanged)
         Application.getInstance().engineCreatedSignal.connect(self._onEngineCreated)
 
-    def getLineMesh(self) -> Optional[MeshData]:
+    def getLineMesh(self):
         return self._line_mesh
 
-    def setLineMesh(self, mesh: MeshData) -> None:
+    def setLineMesh(self, mesh):
         self._line_mesh = mesh
         self.meshDataChanged.emit(self)
 
-    def getSolidMesh(self) -> Optional[MeshData]:
+    def getSolidMesh(self):
         return self._solid_mesh
 
-    def setSolidMesh(self, mesh: MeshData) -> None:
+    def setSolidMesh(self, mesh):
         self._solid_mesh = mesh
         self.meshDataChanged.emit(self)
 
-    def getSelectionMesh(self) -> Optional[MeshData]:
+    def getSelectionMesh(self):
         return self._selection_mesh
 
-    def setSelectionMesh(self, mesh: MeshData) -> None:
+    def setSelectionMesh(self, mesh):
         self._selection_mesh = mesh
         self.meshDataChanged.emit(self)
 
-    def render(self, renderer) -> bool:
-        if not self._enabled:
-            return True
+    def getMaterial(self):
+        return self._shader
 
+    def render(self, renderer):
         if not self._shader:
             self._shader = OpenGL.getInstance().createShaderProgram(Resources.getPath(Resources.Shaders, "toolhandle.shader"))
 
         if self._auto_scale:
-            active_camera = self._scene.getActiveCamera()
-            if active_camera.isPerspective():
-                camera_position = active_camera.getWorldPosition()
-                dist = (camera_position - self.getWorldPosition()).length()
-                scale = dist / 400
-            else:
-                view_width = active_camera.getViewportWidth()
-                current_size = view_width + (2 * active_camera.getZoomFactor() * view_width)
-                scale = current_size / view_width * 5
-
+            camera_position = self._scene.getActiveCamera().getWorldPosition()
+            dist = (camera_position - self.getWorldPosition()).length()
+            scale = dist / 400
             self.setScale(Vector(scale, scale, scale))
 
         if self._line_mesh:
@@ -115,42 +101,29 @@ class ToolHandle(SceneNode.SceneNode):
 
         return True
 
-    def setActiveAxis(self, axis: Optional[int]) -> None:
+    def setActiveAxis(self, axis):
         if axis == self._active_axis or not self._shader:
             return
 
         if axis:
-            self._shader.setUniformValue("u_activeColor", self._axis_color_map.get(axis, Color()))
+            self._shader.setUniformValue("u_activeColor", self._axis_color_map[axis])
         else:
             self._shader.setUniformValue("u_activeColor", self._disabled_axis_color)
         self._active_axis = axis
         self._scene.sceneChanged.emit(self)
 
-    def getActiveAxis(self) -> Optional[int]:
-        return self._active_axis
-
     def isAxis(self, value):
         return value in self._axis_color_map
 
-    def buildMesh(self) -> None:
+    def buildMesh(self):
         # This method should be overridden by toolhandle implementations
         pass
 
-    def _onSelectionCenterChanged(self) -> None:
-        if self._enabled:
-            self.setPosition(Selection.getSelectionCenter())
+    def _onSelectionCenterChanged(self):
+        self.setPosition(Selection.getSelectionCenter())
 
-    def setEnabled(self, enable: bool):
-        super().setEnabled(enable)
-        # Force an update
-        self._onSelectionCenterChanged()
-
-    def _onEngineCreated(self) -> None:
-        from UM.Qt.QtApplication import QtApplication
-        theme = QtApplication.getInstance().getTheme()
-        if theme is None:
-            Logger.log("w", "Could not get theme, so unable to create tool handle meshes.")
-            return
+    def _onEngineCreated(self):
+        theme = Application.getInstance().getTheme()
         self._disabled_axis_color = Color(*theme.getColor("disabled_axis").getRgb())
         self._x_axis_color = Color(*theme.getColor("x_axis").getRgb())
         self._y_axis_color = Color(*theme.getColor("y_axis").getRgb())

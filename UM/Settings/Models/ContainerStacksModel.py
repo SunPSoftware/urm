@@ -1,9 +1,6 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
-
 from UM.Qt.ListModel import ListModel
 
-from PyQt5.QtCore import pyqtProperty, Qt, pyqtSignal
+from PyQt5.QtCore import pyqtSlot, pyqtProperty, Qt, pyqtSignal
 
 from UM.Settings.ContainerRegistry import ContainerRegistry
 from UM.Settings.ContainerStack import ContainerStack
@@ -24,7 +21,6 @@ class ContainerStacksModel(ListModel):
 
         # Listen to changes
         ContainerRegistry.getInstance().containerAdded.connect(self._onContainerChanged)
-        ContainerRegistry.getInstance().containerMetaDataChanged.connect(self._onContainerChanged)
         ContainerRegistry.getInstance().containerRemoved.connect(self._onContainerChanged)
         self._filter_dict = {}
         self._update()
@@ -42,6 +38,7 @@ class ContainerStacksModel(ListModel):
     ##  Private convenience function to reset & repopulate the model.
     def _update(self):
         items = []
+
         # Remove all connections
         for container in self._container_stacks:
             container.nameChanged.disconnect(self._onContainerNameChanged)

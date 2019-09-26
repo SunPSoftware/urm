@@ -1,18 +1,18 @@
-# Copyright (c) 2019 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2017 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from typing import Dict
-from PyQt5.QtGui import QOpenGLVersionProfile, QOpenGLContext, QSurfaceFormat, QWindow
+from PyQt5.QtGui import QOpenGLContext, QSurfaceFormat
 
 from UM.Logger import Logger
 
 
-class OpenGLContext:
+class OpenGLContext(object):
 
     ##  Set OpenGL context, given major, minor version + core using QOpenGLContext
     #   Unfortunately, what you get back does not have to be the requested version.
     @classmethod
-    def setContext(cls, major_version: int, minor_version: int, core = False, profile = None):
+    def setContext(cls, major_version, minor_version, core = False, profile = None):
         new_format = QSurfaceFormat()
         new_format.setMajorVersion(major_version)
         new_format.setMinorVersion(minor_version)
@@ -40,7 +40,7 @@ class OpenGLContext:
     #
     #   \return True if the extension is available, False if not.
     @classmethod
-    def hasExtension(cls, extension_name: str, ctx = None) -> bool:
+    def hasExtension(cls, extension_name, ctx = None):
         if ctx is None:
             ctx = QOpenGLContext.currentContext()
         return ctx.hasExtension(bytearray(extension_name, "utf-8"))
@@ -49,7 +49,7 @@ class OpenGLContext:
     #
     #   \param ctx (optional) context.
     @classmethod
-    def supportsVertexArrayObjects(cls, ctx = None) -> bool:
+    def supportsVertexArrayObjects(cls, ctx = None):
         if ctx is None:
             ctx = QOpenGLContext.currentContext()
         result = False
@@ -68,7 +68,7 @@ class OpenGLContext:
     #   \param core (optional) True for QSurfaceFormat.CoreProfile, False for CompatibilityProfile
     #   \param profile (optional) QSurfaceFormat.CoreProfile, CompatibilityProfile or NoProfile, overrules option core
     @classmethod
-    def setDefaultFormat(cls, major_version: int, minor_version: int, core = False, profile = None) -> None:
+    def setDefaultFormat(cls, major_version, minor_version, core = False, profile = None):
         new_format = QSurfaceFormat()
         new_format.setMajorVersion(major_version)
         new_format.setMinorVersion(minor_version)
@@ -87,19 +87,17 @@ class OpenGLContext:
 
     ##  Return if the OpenGL context version we ASKED for is legacy or not
     @classmethod
-    def isLegacyOpenGL(cls) -> bool:
+    def isLegacyOpenGL(cls):
         if cls.major_version < 4:
             return True
         if cls.major_version == 4 and cls.minor_version < 1:
             return True
         return False
 
-    ##  Return "best" OpenGL to use, 4.1 core or 2.0.
+    ##  Return "best" OpenGL to use, 4.1 core or 2.1.
     #   result is <major_version>, <minor_version>, <profile>
     #   The version depends on what versions are supported in Qt (4.1 and 2.0) and what
     #   the GPU supports. If creating a context fails at all, (None, None, None) is returned
-    #   Note that PyQt only supports 4.1, 2.1 and 2.0. Cura omits support for 2.1, so the
-    #   only returned options are 4.1 and 2.0.
     @classmethod
     def detectBestOpenGLVersion(cls):
         Logger.log("d", "Trying OpenGL context 4.1...")
@@ -113,57 +111,7 @@ class OpenGLContext:
                 Logger.log("d",
                     "Yay, we got at least OpenGL 4.1 core: %s",
                     cls.versionAsText(fmt.majorVersion(), fmt.minorVersion(), profile))
-
-                # https://riverbankcomputing.com/pipermail/pyqt/2017-January/038640.html
-                # PyQt currently only implements 2.0, 2.1 and 4.1Core
-                # If eg 4.5Core would be detected and used here, PyQt would not be able to handle it.
-                major_version = 4
-                minor_version = 1
-
-                # CURA-6092: Check if we're not using software backed 4.1 context; A software 4.1 context
-                # is much slower than a hardware backed 2.0 context
-                gl_window = QWindow()
-                gl_window.setSurfaceType(QWindow.OpenGLSurface)
-                gl_window.showMinimized()
-
-                gl_format = QSurfaceFormat()
-                gl_format.setMajorVersion(major_version)
-                gl_format.setMinorVersion(minor_version)
-                gl_format.setProfile(profile)
-
-                gl_context = QOpenGLContext()
-                gl_context.setFormat(gl_format)
-                gl_context.create()
-                gl_context.makeCurrent(gl_window)
-
-                gl_profile = QOpenGLVersionProfile()
-                gl_profile.setVersion(major_version, minor_version)
-                gl_profile.setProfile(profile)
-
-                gl = gl_context.versionFunctions(gl_profile) # type: Any #It's actually a protected class in PyQt that depends on the requested profile and the implementation of your graphics card.
-
-                gpu_type = "Unknown"  # type: str
-
-                result = None
-                if gl:
-                    result = gl.initializeOpenGLFunctions()
-
-                if not result:
-                    Logger.log("e", "Could not initialize OpenGL to get gpu type")
-                else:
-                    # WORKAROUND: Cura/#1117 Cura-packaging/12
-                    # Some Intel GPU chipsets return a string, which is not undecodable via PyQt5.
-                    # This workaround makes the code fall back to a "Unknown" renderer in these cases.
-                    try:
-                        gpu_type = gl.glGetString(gl.GL_RENDERER) #type: str
-                    except UnicodeDecodeError:
-                        Logger.log("e", "DecodeError while getting GL_RENDERER via glGetString!")
-
-                Logger.log("d", "OpenGL renderer type for this OpenGL version: %s", gpu_type)
-                if "software" in gpu_type.lower():
-                    Logger.log("w", "Unfortunately OpenGL 4.1 uses software rendering")
-                else:
-                    return major_version, minor_version, QSurfaceFormat.CoreProfile
+                return 4, 1, QSurfaceFormat.CoreProfile
         else:
             Logger.log("d", "Failed to create OpenGL context 4.1.")
 
@@ -190,7 +138,7 @@ class OpenGLContext:
 
     ##  Return OpenGL version number and profile as a nice formatted string
     @classmethod
-    def versionAsText(cls, major_version: int, minor_version: int, profile) -> str:
+    def versionAsText(cls, major_version, minor_version, profile):
         if profile == QSurfaceFormat.CompatibilityProfile:
             xtra = "Compatibility profile"
         elif profile == QSurfaceFormat.CoreProfile:
@@ -206,5 +154,5 @@ class OpenGLContext:
     minor_version = 0
     profile = None  # type: QSurfaceFormat
 
-    # To be filled by helper functions
-    properties = {}  # type: Dict[str, bool]
+    # to be filled by helper functions
+    properties = {} # type: Dict[str, bool]

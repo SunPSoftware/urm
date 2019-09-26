@@ -1,5 +1,5 @@
 # Copyright (c) 2015 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from UM.PluginObject import PluginObject
 import collections
@@ -28,7 +28,7 @@ class Extension(PluginObject):
 
     ##  Get the name of the menu where all menu items are placed in
     #   \param menu name \type{string}
-    def getMenuName(self) -> Optional[str]:
+    def getMenuName(self) -> str:
         return self._menu_name
 
     ##  Call function associated with option

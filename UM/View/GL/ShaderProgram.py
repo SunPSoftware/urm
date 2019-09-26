@@ -1,10 +1,10 @@
 # Copyright (c) 2015 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 import configparser
 import ast
 
-from PyQt5.QtGui import QOpenGLShader, QOpenGLShaderProgram, QVector2D, QVector3D, QVector4D, QMatrix4x4, QColor
+from PyQt5.QtGui import QOpenGLShader, QOpenGLShaderProgram, QVector2D, QVector3D, QVector4D, QMatrix4x4, QColor, QImage, QOpenGLTexture, QOpenGLVertexArrayObject, QOpenGLBuffer
 from UM.Logger import Logger
 
 from UM.Math.Vector import Vector
@@ -15,7 +15,6 @@ from UM.Math.Color import Color
 ##  Raised when an error occurs during loading of the shader file.
 class InvalidShaderProgramError(Exception):
     pass
-
 
 ##  An abstract class for dealing with shader programs.
 #
@@ -202,15 +201,15 @@ class ShaderProgram:
         if attribute == -1:
             return
 
-        if type == "int":
+        if type is "int":
             self._shader_program.setAttributeBuffer(attribute, 0x1404, offset, 1, stride) #GL_INT
-        elif type == "float":
+        elif type is "float":
             self._shader_program.setAttributeBuffer(attribute, 0x1406, offset, 1, stride) #GL_FLOAT
-        elif type == "vector2f":
+        elif type is "vector2f":
             self._shader_program.setAttributeBuffer(attribute, 0x1406, offset, 2, stride) #GL_FLOAT
-        elif type == "vector3f":
+        elif type is "vector3f":
             self._shader_program.setAttributeBuffer(attribute, 0x1406, offset, 3, stride) #GL_FLOAT
-        elif type == "vector4f":
+        elif type is "vector4f":
             self._shader_program.setAttributeBuffer(attribute, 0x1406, offset, 4, stride) #GL_FLOAT
 
         self._shader_program.enableAttributeArray(attribute)
@@ -313,7 +312,8 @@ class ShaderProgram:
         del self._attribute_bindings[key]
 
     def _matrixToQMatrix4x4(self, m):
-        return QMatrix4x4(m.getData().flatten())
+        return QMatrix4x4(m.at(0, 0), m.at(0, 1), m.at(0, 2), m.at(0, 3), m.at(1, 0), m.at(1, 1), m.at(1, 2), m.at(1, 3),
+            m.at(2, 0), m.at(2, 1), m.at(2, 2), m.at(2, 3), m.at(3, 0), m.at(3, 1), m.at(3, 2), m.at(3, 3))
 
     def _setUniformValueDirect(self, uniform, value):
         if type(value) is Vector:

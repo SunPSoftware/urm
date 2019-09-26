@@ -1,5 +1,5 @@
-# Copyright (c) 2018 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Copyright (c) 2015 Ultimaker B.V.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from PyQt5.QtCore import pyqtProperty, Qt, QCoreApplication, pyqtSignal, pyqtSlot, QMetaObject, QRectF
 from PyQt5.QtGui import QColor
@@ -9,9 +9,8 @@ from UM.Math.Matrix import Matrix
 from UM.Qt.QtMouseDevice import QtMouseDevice
 from UM.Qt.QtKeyDevice import QtKeyDevice
 from UM.Application import Application
+from UM.Preferences import Preferences
 from UM.Signal import Signal, signalemitter
-from UM.Scene.Camera import Camera
-from typing import Optional
 
 
 ##  QQuickWindow subclass that provides the main window.
@@ -29,18 +28,13 @@ class MainWindow(QQuickWindow):
         self._mouse_device.setPluginId("qt_mouse")
         self._key_device = QtKeyDevice()
         self._key_device.setPluginId("qt_key")
-        self._previous_focus = None  # type: Optional["QQuickItem"]
+        self._previous_focus = None
 
         self._app = QCoreApplication.instance()
-
-        # Remove previously added input devices (if any). This can happen if the window was re-loaded.
-        self._app.getController().removeInputDevice("qt_mouse")
-        self._app.getController().removeInputDevice("qt_key")
-
         self._app.getController().addInputDevice(self._mouse_device)
         self._app.getController().addInputDevice(self._key_device)
         self._app.getController().getScene().sceneChanged.connect(self._onSceneChanged)
-        self._preferences = Application.getInstance().getPreferences()
+        self._preferences = Preferences.getInstance()
 
         self._preferences.addPreference("general/window_width", 1280)
         self._preferences.addPreference("general/window_height", 720)
@@ -66,35 +60,10 @@ class MainWindow(QQuickWindow):
         self._mouse_x = 0
         self._mouse_y = 0
 
-        self._mouse_pressed = False
-
         self._viewport_rect = QRectF(0, 0, 1.0, 1.0)
-
-        self.closing.connect(self.preClosing)
 
         Application.getInstance().setMainWindow(self)
         self._fullscreen = False
-
-        self._allow_resize = True
-
-    # This event is triggered before hideEvent(self, event) event and might prevent window closing if
-    # does not pass the check, for example if USB printer is printing
-    # The implementation is in Cura.qml
-    preClosing = pyqtSignal("QQuickCloseEvent*", arguments = ["close"])
-
-    def setAllowResize(self, allow_resize: bool):
-        if self._allow_resize != allow_resize:
-            if not allow_resize:
-                self.setMaximumHeight(self.height())
-                self.setMinimumHeight(self.height())
-                self.setMaximumWidth(self.width())
-                self.setMinimumWidth(self.width())
-            else:
-                self.setMaximumHeight(16777215)
-                self.setMinimumHeight(0)
-                self.setMaximumWidth(16777215)
-                self.setMinimumWidth(0)
-            self._allow_resize = allow_resize
 
     @pyqtSlot()
     def toggleFullscreen(self):
@@ -103,11 +72,6 @@ class MainWindow(QQuickWindow):
         else:
             self.setVisibility(QQuickWindow.FullScreen)  # Go to fullscreen
         self._fullscreen = not self._fullscreen
-
-    @pyqtSlot()
-    def exitFullscreen(self):
-        self.setVisibility(QQuickWindow.Windowed)
-        self._fullscreen = False
 
     def getBackgroundColor(self):
         return self._background_color
@@ -154,14 +118,11 @@ class MainWindow(QQuickWindow):
 
         self._previous_focus = self.activeFocusItem()
         self._mouse_device.handleEvent(event)
-        self._mouse_pressed = True
 
     def mouseMoveEvent(self, event):
         self._mouse_x = event.x()
         self._mouse_y = event.y()
-
-        if self._mouse_pressed:
-            self.mousePositionChanged.emit()
+        self.mousePositionChanged.emit()
 
         super().mouseMoveEvent(event)
         if event.isAccepted():
@@ -174,7 +135,6 @@ class MainWindow(QQuickWindow):
         if event.isAccepted():
             return
         self._mouse_device.handleEvent(event)
-        self._mouse_pressed = False
 
     def keyPressEvent(self, event):
         super().keyPressEvent(event)
@@ -211,8 +171,8 @@ class MainWindow(QQuickWindow):
         QMetaObject.invokeMethod(self, "_onWindowGeometryChanged", Qt.QueuedConnection)
 
     def hideEvent(self, event):
-        if Application.getInstance().getMainWindow() == self:
-            Application.getInstance().windowClosed()
+        pass
+        #Application.getInstance().windowClosed()
 
     renderCompleted = Signal(type = Signal.Queued)
 
@@ -232,25 +192,28 @@ class MainWindow(QQuickWindow):
 
     @pyqtSlot()
     def _onWindowGeometryChanged(self):
-        self._preferences.setValue("general/window_width", self.width())
-        self._preferences.setValue("general/window_height", self.height())
-        self._preferences.setValue("general/window_left", self.x())
-        self._preferences.setValue("general/window_top", self.y())
-        # This is a workaround for QTBUG-30085
-        if self.windowState() in (Qt.WindowNoState, Qt.WindowMaximized):
-            self._preferences.setValue("general/window_state", self.windowState())
+        if self.windowState() == Qt.WindowNoState:
+            self._preferences.setValue("general/window_width", self.width())
+            self._preferences.setValue("general/window_height", self.height())
+            self._preferences.setValue("general/window_left", self.x())
+            self._preferences.setValue("general/window_top", self.y())
+            self._preferences.setValue("general/window_state", Qt.WindowNoState)
+        elif self.windowState() == Qt.WindowMaximized:
+            self._preferences.setValue("general/window_state", Qt.WindowMaximized)
 
-    def _updateViewportGeometry(self, width: int, height: int):
+    def _updateViewportGeometry(self, width, height):
         view_width = width * self._viewport_rect.width()
         view_height = height * self._viewport_rect.height()
 
         for camera in self._app.getController().getScene().getAllCameras():
+            camera.setViewportSize(view_width, view_height)
             camera.setWindowSize(width, height)
-
-            if camera.getAutoAdjustViewPort():
-                camera.setViewportSize(view_width, view_height)
+            projection_matrix = Matrix()
+            if camera.isPerspective():
+                projection_matrix.setPerspective(30, view_width / view_height, 1, 500)
+            else:
+                projection_matrix.setOrtho(-view_width / 2, view_width / 2, -view_height / 2, view_height / 2, -500, 500)
+            camera.setProjectionMatrix(projection_matrix)
 
         self._app.getRenderer().setViewportSize(view_width, view_height)
         self._app.getRenderer().setWindowSize(width, height)
-
-

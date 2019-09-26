@@ -1,10 +1,9 @@
 # Copyright (c) 2016 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from UM.Job import Job
 import time
 from UM.Logger import Logger
-from UM.FileHandler.FileWriter import FileWriter
 
 
 ##  A Job subclass that performs writing.
@@ -25,7 +24,6 @@ class WriteFileJob(Job):
         self._data = data
         self._file_name = ""
         self._mode = mode
-        self._add_to_recent_files = False  # If this file should be added to the "recent files" list upon success
         self._message = None
         self.progress.connect(self._onProgress)
         self.finished.connect(self._onFinished)
@@ -55,17 +53,9 @@ class WriteFileJob(Job):
     def getMessage(self):
         return self._message
 
-    def setAddToRecentFiles(self, value: bool) -> None:
-        self._add_to_recent_files = value
-
-    def getAddToRecentFiles(self) -> bool:
-        return self._add_to_recent_files and self._writer.getAddToRecentFiles()
-
     def run(self):
         Job.yieldThread()
         begin_time = time.time()
         self.setResult(self._writer.write(self._stream, self._data, self._mode))
-        if not self.getResult():
-            self.setError(self._writer.getInformation())
         end_time = time.time()
         Logger.log("d", "Writing file took %s seconds", end_time - begin_time)

@@ -1,13 +1,9 @@
-# Copyright (c) 2019 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
-
 from UM.Qt.ListModel import ListModel
 
 from PyQt5.QtCore import pyqtProperty, Qt, pyqtSignal
 
 from UM.Settings.ContainerRegistry import ContainerRegistry
 from UM.Settings.DefinitionContainer import DefinitionContainer
-from typing import Dict
 
 
 ##  Model that holds definition containers. By setting the filter property the definitions held by this model can be
@@ -23,16 +19,14 @@ class DefinitionContainersModel(ListModel):
         self.addRoleName(self.IdRole, "id")
         self.addRoleName(self.SectionRole, "section")
 
+        self._definition_containers = []
+
         # Listen to changes
         ContainerRegistry.getInstance().containerAdded.connect(self._onContainerChanged)
         ContainerRegistry.getInstance().containerRemoved.connect(self._onContainerChanged)
 
         self._section_property = ""
-
-        #Preference for which sections should be shown on top. Weights for each section.
-        #Sections with the lowest value are shown on top. Sections not on this
-        #list will get a value of 0.
-        self._preferred_sections = {} #type: Dict[str, int]
+        self._preferred_section_value = ""
 
         self._filter_dict = {}
         self._update()
@@ -46,17 +40,17 @@ class DefinitionContainersModel(ListModel):
     ##  Private convenience function to reset & repopulate the model.
     def _update(self):
         items = []
-        definition_containers = ContainerRegistry.getInstance().findDefinitionContainersMetadata(**self._filter_dict)
-        definition_containers.sort(key = self._sortKey)
+        self._definition_containers = ContainerRegistry.getInstance().findDefinitionContainers(**self._filter_dict)
+        self._definition_containers.sort(key = self._sortKey)
 
-        for metadata in definition_containers:
-            metadata = dict(metadata) # For fully loaded definitions, the metadata is an OrderedDict which does not pass to QML correctly
+        for container in self._definition_containers:
+            metadata = container.getMetaData().copy()
 
             items.append({
-                "name": metadata["name"],
-                "id": metadata["id"],
+                "name": container.getName(),
+                "id": container.getId(),
                 "metadata": metadata,
-                "section": metadata.get(self._section_property, ""),
+                "section": container.getMetaDataEntry(self._section_property, ""),
             })
         self.setItems(items)
 
@@ -71,17 +65,16 @@ class DefinitionContainersModel(ListModel):
     def sectionProperty(self):
         return self._section_property
 
-    def setPreferredSections(self, weights: Dict[str, int]):
-        if self._preferred_sections != weights:
-            self._preferred_sections = weights
-            self.preferredSectionsChanged.emit()
+    def setPreferredSectionValue(self, value):
+        if self._preferred_section_value != value:
+            self._preferred_section_value = value
+            self.preferredSectionValueChanged.emit()
             self._update()
 
-    preferredSectionsChanged = pyqtSignal()
-
-    @pyqtProperty("QVariantMap", fset = setPreferredSections, notify = preferredSectionsChanged)
-    def preferredSections(self):
-        return self._preferred_sections
+    preferredSectionValueChanged = pyqtSignal()
+    @pyqtProperty(str, fset = setPreferredSectionValue, notify = preferredSectionValueChanged)
+    def preferredSectionValue(self):
+        return self._preferred_section_value
 
     ##  Set the filter of this model based on a string.
     #   \param filter_dict Dictionary to do the filtering by.
@@ -98,13 +91,13 @@ class DefinitionContainersModel(ListModel):
         result = []
 
         if self._section_property:
-            section_value = item.get(self._section_property, "")
-            section_weight = self._preferred_sections.get(section_value, 0)
-            result.append(section_weight)
-            result.append(section_value.lower())
+            section_value = item.getMetaDataEntry(self._section_property, "")
+            if self._preferred_section_value:
+                result.append(section_value != self._preferred_section_value)
+            result.append(section_value)
 
-        result.append(int(item.get("weight", 0))) #Weight within a section.
-        result.append(item["name"].lower())
+        result.append(int(item.getMetaDataEntry("weight", 0)))
+        result.append(item.getName())
 
         return result
 

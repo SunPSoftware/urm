@@ -1,5 +1,5 @@
 # Copyright (c) 2017 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from PyQt5.QtCore import QObject, QVariant, pyqtProperty, pyqtSignal
 from UM.FlameProfiler import pyqtSlot
@@ -10,14 +10,13 @@ from UM.Settings.ContainerRegistry import ContainerRegistry
 from UM.Settings.SettingDefinition import SettingDefinition
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
-
 ##  This class provides the value and change notifications for the properties of a single setting
 #
 #   This class provides the property values through QObject dynamic properties so that they
 #   are available from QML.
 class ContainerPropertyProvider(QObject):
-    def __init__(self, parent = None):
-        super().__init__(parent = parent)
+    def __init__(self, parent = None, *args, **kwargs):
+        super().__init__(parent = parent, *args, **kwargs)
 
         self._container_id = ""
         self._container = None
@@ -28,7 +27,7 @@ class ContainerPropertyProvider(QObject):
     ##  Set the containerId property.
     def setContainerId(self, container_id):
         if container_id == self._container_id:
-            return # No change.
+            return #No change.
 
         self._container_id = container_id
 
@@ -97,7 +96,7 @@ class ContainerPropertyProvider(QObject):
         if not self._container or not self._key:
             return
 
-        if ContainerRegistry.getInstance().isReadOnly(self._container_id):
+        if self._container.isReadOnly():
             return
 
         if property_name not in self._watched_properties:
@@ -120,6 +119,7 @@ class ContainerPropertyProvider(QObject):
 
         if property_name not in self._watched_properties:
             return
+
         value = self._getPropertyValue(property_name)
 
         if self._property_values.get(property_name, None) != value:

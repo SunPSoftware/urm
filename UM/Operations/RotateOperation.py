@@ -1,5 +1,5 @@
 # Copyright (c) 2015 Ultimaker B.V.
-# Uranium is released under the terms of the LGPLv3 or higher.
+# Uranium is released under the terms of the AGPLv3 or higher.
 
 from UM.Scene.SceneNode import SceneNode
 from UM.Math.Vector import Vector
@@ -11,7 +11,7 @@ class RotateOperation(Operation.Operation):
     ##  Initialises the operation.
     #
     #   \param node The node to rotate.
-    #   \param rotation A transformation quaternion that rotates a space. This
+    #   \param rotation A transformation matrix that rotates a space. This
     #   rotation is applied on the node.
     #   \param kwargs Key-word arguments, including:
     #     - rotate_around_point: A point around which to rotate the node.
@@ -56,4 +56,4 @@ class RotateOperation(Operation.Operation):
     #
     #   \return A programmer-readable representation of this operation.
     def __repr__(self):
-        return "RotateOp.(node={0},rot.={1})".format(self._node, self._rotation)
+        return "RotateOperation(node = {0}, rotation={1})".format(self._node, self._rotation)
